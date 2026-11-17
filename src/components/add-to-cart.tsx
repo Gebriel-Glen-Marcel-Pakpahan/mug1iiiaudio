@@ -1,0 +1,88 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { Check, Loader2, Plus, ShoppingBag } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle: string }) {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [state, setState] = useState<"idle" | "loading" | "added" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function add() {
+    if (!session?.user) {
+      router.push(`/masuk?next=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
+    setState("loading");
+    setMessage(null);
+    try {
+      const res = await fetch("/api/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ albumId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal menambahkan ke keranjang.");
+      setState("added");
+      router.refresh();
+      setTimeout(() => setState("idle"), 2600);
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Gagal menambahkan.");
+      setTimeout(() => setState("idle"), 3000);
+    }
+  }
+
+  if (status === "loading") {
+    return <div className="h-12 w-56 animate-pulse bg-white/[0.04]" />;
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={add}
+          disabled={state === "loading"}
+          className={cn(
+            "btn-gold min-w-[15rem]",
+            state === "added" && "!bg-none !bg-signal-ok !text-carbon-950",
+          )}
+        >
+          {state === "loading" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : state === "added" ? (
+            <Check size={15} />
+          ) : (
+            <Plus size={15} />
+          )}
+          {state === "added" ? "Ditambahkan" : "Tambah ke keranjang"}
+        </button>
+
+        <button
+          onClick={() => router.push("/keranjang")}
+          className="btn-outline"
+          aria-label="Lihat keranjang"
+        >
+          <ShoppingBag size={14} />
+          Keranjang
+        </button>
+      </div>
+
+      {!session?.user && (
+        <p className="font-mono text-[0.5625rem] uppercase tracking-label text-ink-faint">
+          Butuh akun Google untuk akses file
+        </p>
+      )}
+      {message && (
+        <p className="text-xs text-signal-bad" role="alert">
+          {message}
+        </p>
+      )}
+      <span className="sr-only">{albumTitle}</span>
+    </div>
+  );
+}
