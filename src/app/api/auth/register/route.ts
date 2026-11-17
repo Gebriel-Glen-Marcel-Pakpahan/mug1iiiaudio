@@ -62,8 +62,9 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     console.error("Register error:", err);
+    const detail = (err as Error)?.message || String(err);
     return NextResponse.json(
-      { error: "Terjadi kesalahan saat mendaftarkan akun." },
+      { error: `Terjadi kesalahan saat mendaftarkan akun: ${detail}` },
       { status: 500 }
     );
   }
