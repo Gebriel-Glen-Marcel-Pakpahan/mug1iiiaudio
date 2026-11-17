@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowUpRight, Download, FolderOpen } from "lucide-react";
 import { authOptions } from "@/lib/auth";
 import { getSessionUser } from "@/lib/session";
 import { getOrderForUser, listAlbums } from "@/lib/repo";
+import { getStoredOrderById } from "@/lib/order-cookie";
 import { formatDateTime, formatIDR, formatSize, statusLabel } from "@/lib/utils";
 import { StatusBadge } from "@/components/status-badge";
 import { RefundForm } from "@/components/refund-form";
@@ -18,8 +19,14 @@ export default async function OrderDetailPage({ params }: { params: { id: string
   const user = await getSessionUser();
   if (!user) redirect(`/masuk?next=/pesanan/${params.id}`);
 
-  const order = await getOrderForUser(params.id, user.id);
-  if (!order) notFound();
+  let order = await getOrderForUser(params.id, user.id);
+  if (!order) {
+    const cookieOrder = getStoredOrderById(params.id);
+    if (cookieOrder) {
+      order = await getOrderForUser(params.id, user.id);
+    }
+  }
+  if (!order) redirect("/pesanan");
 
   const albums = await listAlbums();
   const items = order.items.map((item, idx) => ({

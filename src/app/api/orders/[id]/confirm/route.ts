@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { confirmOrderPayment, getOrderForUser, syncOrderPayment } from "@/lib/repo";
 import { config } from "@/lib/config";
 import { jsonError, requireUser } from "@/lib/session";
+import { attachOrderCookies } from "@/lib/order-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -19,12 +20,14 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
     if (config.midtrans.isConfigured) {
       const synced = await syncOrderPayment(params.id);
       if (synced && (synced.status === "PAID" || synced.status === "REFUNDED")) {
-        return NextResponse.json({
+        const res = NextResponse.json({
           status: synced.status,
           paymentStatus: synced.paymentStatus,
           accessStatus: synced.accessStatus,
           paidAt: synced.paidAt,
         });
+        attachOrderCookies(res, synced);
+        return res;
       }
     }
 
@@ -34,12 +37,14 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ error: "Gagal memproses konfirmasi pembayaran." }, { status: 500 });
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       status: confirmed.status,
       paymentStatus: confirmed.paymentStatus,
       accessStatus: confirmed.accessStatus,
       paidAt: confirmed.paidAt,
     });
+    attachOrderCookies(res, confirmed);
+    return res;
   } catch (err) {
     return jsonError(err);
   }

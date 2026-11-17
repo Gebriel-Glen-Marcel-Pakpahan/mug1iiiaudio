@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrderForUser, syncOrderPayment } from "@/lib/repo";
 import { config } from "@/lib/config";
 import { jsonError, requireUser } from "@/lib/session";
+import { attachOrderCookies } from "@/lib/order-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -12,13 +13,13 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     let order = await getOrderForUser(params.id, user.id);
     if (!order) return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
 
-    // In live mode, actively sync with Midtrans so localhost payments are detected automatically
+    // In live mode, actively sync with Midtrans so payments are detected automatically
     if (order.status === "PENDING" && config.midtrans.isConfigured) {
       const synced = await syncOrderPayment(params.id);
       if (synced) order = synced;
     }
 
-    return NextResponse.json(
+    const res = NextResponse.json(
       {
         status: order.status,
         paymentStatus: order.paymentStatus,
@@ -27,6 +28,10 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       },
       { headers: { "Cache-Control": "no-store" } },
     );
+
+    // Keep cookie in sync whenever status changes
+    attachOrderCookies(res, order);
+    return res;
   } catch (err) {
     return jsonError(err);
   }

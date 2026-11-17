@@ -14,6 +14,7 @@ import { isPostgresConfigured, loadDbFromPostgres, syncMutationToPostgres } from
  */
 
 import os from "node:os";
+import { hydrateOrdersFromCookies } from "./order-cookie";
 
 // Detect if running on Vercel or read-only serverless environment
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -101,6 +102,7 @@ export async function withDb<T>(fn: (db: DbShape) => T | Promise<T>): Promise<T>
     ) {
       state.data = await readFromDisk();
     }
+    hydrateOrdersFromCookies(state.data);
     const result = await fn(state.data);
     await persist(state.data);
     if (isPostgresConfigured()) {
@@ -121,6 +123,7 @@ export async function readDb(): Promise<DbShape> {
   ) {
     state.data = await readFromDisk();
   }
+  hydrateOrdersFromCookies(state.data);
   return state.data;
 }
 

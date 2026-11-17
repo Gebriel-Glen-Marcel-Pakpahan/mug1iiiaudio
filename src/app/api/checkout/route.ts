@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkout } from "@/lib/repo";
 import { jsonError, rateLimit, requireUser } from "@/lib/session";
+import { attachOrderCookies } from "@/lib/order-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
 
     const body = (await req.json().catch(() => ({}))) as { albumId?: string };
     const { order, reused } = await checkout(user, body.albumId);
-    return NextResponse.json({
+    const res = NextResponse.json({
       orderId: order.id,
       orderNumber: order.orderNumber,
       totalAmount: order.totalAmount,
@@ -25,6 +26,10 @@ export async function POST(req: Request) {
       expiresAt: order.payment?.expiresAt ?? null,
       reused,
     });
+
+    // Attach order cookies for seamless serverless cross-container persistence
+    attachOrderCookies(res, order);
+    return res;
   } catch (err) {
     return jsonError(err);
   }
