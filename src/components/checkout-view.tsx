@@ -12,6 +12,7 @@ interface Item {
   price: number;
   format: string;
   sampleRate: string;
+  albumId?: string;
   bitDepth: string;
 }
 
@@ -20,11 +21,13 @@ export function CheckoutView({
   name,
   subtotal,
   items,
+  directAlbumId,
 }: {
   email: string;
   name: string | null;
   subtotal: number;
   items: Item[];
+  directAlbumId?: string;
 }) {
   const router = useRouter();
   const [agreed, setAgreed] = useState(false);
@@ -36,7 +39,12 @@ export function CheckoutView({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/checkout", { method: "POST" });
+      const targetAlbumId = directAlbumId || (items.length === 1 ? items[0].albumId : undefined);
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ albumId: targetAlbumId }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Checkout gagal.");
       router.push(`/bayar/${data.orderId}`);

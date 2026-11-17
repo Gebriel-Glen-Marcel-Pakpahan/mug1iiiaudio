@@ -3,6 +3,7 @@ import { createQrisCharge, verifySignature, fetchMidtransStatus } from "./servic
 import { grantFolderAccess, revokeFolderAccess } from "./services/gdrive";
 import { sendAccessEmail, sendRefundEmail } from "./services/email";
 import { config } from "./config";
+import { getCartAlbumIdsFromCookies } from "./cart-cookie";
 import type { Album, AlbumRequest, AlbumRequestStatus, DbShape, Order, OrderView, Refund, User } from "./types";
 
 /* ------------------------------------------------------------------ */
@@ -63,10 +64,32 @@ export async function listAllOrders(): Promise<OrderView[]> {
 
 export async function getCartView(userId: string) {
   const db = await readDb();
-  const items = db.cart
-    .filter((c) => c.userId === userId)
-    .map((c) => ({ ...c, album: db.albums.find((a) => a.id === c.albumId) }))
-    .filter((c): c is typeof c & { album: Album } => Boolean(c.album));
+
+  let cookieAlbumIds: string[] = [];
+  try {
+    cookieAlbumIds = getCartAlbumIdsFromCookies();
+  } catch {
+    // ignore outside request
+  }
+
+  const dbItems = db.cart.filter((c) => c.userId === userId);
+  const allAlbumIds = Array.from(new Set([...dbItems.map((c) => c.albumId), ...cookieAlbumIds]));
+
+  const items = allAlbumIds
+    .map((albumId) => {
+      const album = db.albums.find((a) => a.id === albumId && a.isPublished);
+      if (!album) return null;
+      const existing = dbItems.find((c) => c.albumId === albumId);
+      return {
+        id: existing?.id || `cart_${albumId}`,
+        userId,
+        albumId,
+        addedAt: existing?.addedAt || new Date().toISOString(),
+        album,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
   const subtotal = items.reduce((s, i) => s + i.album.price, 0);
   return { items, subtotal };
 }
@@ -99,13 +122,14 @@ export async function removeCartItem(userId: string, itemId: string) {
 /* Checkout — PRD §10.1 (idempotent, reuses pending order)             */
 /* ------------------------------------------------------------------ */
 
-export async function checkout(user: User) {
-  // Guard: reuse an existing PENDING order with a live QR instead of double-charging.
+export async function checkout(user: User, directAlbumId?: string) {
+  // Guard: reuse an existing PENDING order with a live QR instead of double-charging (if not a specific direct album).
   const existing = await withDb((db) => {
     const pending = db.orders.find(
       (o) => o.userId === user.id && o.status === "PENDING" && o.paymentStatus === "PENDING",
     );
     if (!pending) return null;
+    if (directAlbumId && !pending.items.some((i) => i.albumId === directAlbumId)) return null;
     const payment = db.payments.find((p) => p.orderId === pending.id);
     if (!payment?.qrString) return null;
     if (payment.expiresAt && new Date(payment.expiresAt).getTime() < Date.now()) return null;
@@ -117,14 +141,24 @@ export async function checkout(user: User) {
     return { order: view!, payment: existing.payment, reused: true };
   }
 
-  const cart = await getCartView(user.id);
-  if (!cart.items.length) throw new Error("Keranjang masih kosong.");
+  const db = await readDb();
+  let checkoutItems: { album: Album; price: number }[] = [];
+
+  if (directAlbumId) {
+    const album = db.albums.find((a) => a.id === directAlbumId && a.isPublished);
+    if (!album) throw new Error("Album tidak ditemukan.");
+    checkoutItems = [{ album, price: album.price }];
+  } else {
+    const cart = await getCartView(user.id);
+    if (!cart.items.length) throw new Error("Keranjang masih kosong.");
+    checkoutItems = cart.items.map((c) => ({ album: c.album, price: c.album.price }));
+  }
 
   const orderId = id("ord");
   const orderNumber = makeOrderNumber();
-  const total = cart.subtotal;
+  const total = checkoutItems.reduce((s, i) => s + i.price, 0);
 
-  await withDb((db) => {
+  await withDb((d) => {
     const order: Order = {
       id: orderId,
       orderNumber,
@@ -134,21 +168,21 @@ export async function checkout(user: User) {
       status: "PENDING",
       paymentStatus: "PENDING",
       accessStatus: "PENDING",
-      items: cart.items.map((c, idx) => ({
+      items: checkoutItems.map((c, idx) => ({
         id: `oi_${orderId}_${idx}`,
         orderId,
         albumId: c.album.id,
-        priceSnapshot: c.album.price,
+        priceSnapshot: c.price,
       })),
       createdAt: nowIso(),
       paidAt: null,
     };
-    db.orders.push(order);
-    audit(db, {
+    d.orders.push(order);
+    audit(d, {
       actor: user.email,
       action: "checkout.created",
       target: orderNumber,
-      detail: `${cart.items.length} item · Rp ${total.toLocaleString("id-ID")}`,
+      detail: `${checkoutItems.length} item · Rp ${total.toLocaleString("id-ID")}`,
     });
   });
 

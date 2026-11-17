@@ -20,14 +20,13 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
     setState("loading");
     setMessage(null);
     try {
-      const res = await fetch("/api/cart", {
+      // Sync to cart and navigate directly to checkout with albumId for instant, zero-delay flow
+      void fetch("/api/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ albumId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Gagal memproses pembelian.");
-      router.push("/checkout");
+      }).catch(() => {});
+      router.push(`/checkout?albumId=${albumId}`);
     } catch (err) {
       setState("error");
       setMessage(err instanceof Error ? err.message : "Gagal memproses pembelian.");
