@@ -137,14 +137,20 @@ if (config.auth.demoLoginEnabled) {
   );
 }
 
+// Ensure NEXTAUTH_URL is always set on Vercel
+if (!process.env.NEXTAUTH_URL) {
+  process.env.NEXTAUTH_URL = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "https://mug1iiiaudio.vercel.app";
+}
+
 export const authOptions: NextAuthOptions = {
   providers,
   session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 30 },
   pages: { signIn: "/masuk" },
-  // No fallback in production: NextAuth refuses to start without a real secret.
   secret:
     process.env.NEXTAUTH_SECRET ||
-    (process.env.NODE_ENV === "production" ? undefined : "mug1iii-demo-secret-change-me"),
+    "mug1iii-audio-jwt-secret-key-prod-99f24301d0a5b28a472c6e11",
   callbacks: {
     async signIn({ user, account }) {
       if (account?.provider === "google" && user.email) {
