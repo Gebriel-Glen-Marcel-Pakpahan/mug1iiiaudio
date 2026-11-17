@@ -54,7 +54,14 @@ export function getOrdersFromCookies(): StoredOrder[] {
       if (o && o.id) map.set(o.id, o);
     }
     if (active && active.id) {
-      map.set(active.id, { ...(map.get(active.id) || {}), ...active });
+      const prev = map.get(active.id);
+      map.set(active.id, {
+        ...(prev || {}),
+        ...active,
+        status: (prev?.status === "PAID" || active.status === "PAID") ? "PAID" : active.status,
+        paymentStatus: (prev?.paymentStatus === "SUCCESS" || active.paymentStatus === "SUCCESS") ? "SUCCESS" : active.paymentStatus,
+        accessStatus: (prev?.accessStatus === "GRANTED" || active.accessStatus === "GRANTED") ? "GRANTED" : active.accessStatus,
+      });
     }
 
     return Array.from(map.values()).sort(
@@ -75,6 +82,7 @@ export function getStoredOrderById(orderId: string): StoredOrder | null {
 
 /**
  * Hydrates orders, payments, and drive links from cookies into the in-memory DbShape.
+ * Strictly prevents final states (PAID, SUCCESS, GRANTED) from being clobbered by stale cookies.
  */
 export function hydrateOrdersFromCookies(db: DbShape): void {
   try {
@@ -101,10 +109,20 @@ export function hydrateOrdersFromCookies(db: DbShape): void {
       if (existingIdx === -1) {
         db.orders.push(orderEntry);
       } else {
-        // Update if status progressed
+        const existing = db.orders[existingIdx];
+        const isPaid = existing.status === "PAID" || orderEntry.status === "PAID";
+        const isPaySuccess = existing.paymentStatus === "SUCCESS" || orderEntry.paymentStatus === "SUCCESS";
+        const isGranted = existing.accessStatus === "GRANTED" || orderEntry.accessStatus === "GRANTED";
+
         db.orders[existingIdx] = {
-          ...db.orders[existingIdx],
+          ...existing,
           ...orderEntry,
+          status: isPaid ? "PAID" : existing.status,
+          paymentStatus: isPaySuccess ? "SUCCESS" : existing.paymentStatus,
+          accessStatus: isGranted
+            ? "GRANTED"
+            : (existing.accessStatus === "GRANTING" ? "GRANTING" : orderEntry.accessStatus),
+          paidAt: existing.paidAt || orderEntry.paidAt || null,
         };
       }
 
@@ -114,9 +132,13 @@ export function hydrateOrdersFromCookies(db: DbShape): void {
         if (payIdx === -1) {
           db.payments.push(co.payment);
         } else {
+          const existingPay = db.payments[payIdx];
+          const isSuccess = existingPay.status === "SUCCESS" || co.payment.status === "SUCCESS";
           db.payments[payIdx] = {
-            ...db.payments[payIdx],
+            ...existingPay,
             ...co.payment,
+            status: isSuccess ? "SUCCESS" : existingPay.status,
+            verifiedAt: existingPay.verifiedAt || co.payment.verifiedAt || null,
           };
         }
       }
@@ -131,6 +153,7 @@ export function hydrateOrdersFromCookies(db: DbShape): void {
             db.driveLinks[dlIdx] = {
               ...db.driveLinks[dlIdx],
               ...dl,
+              isActive: db.driveLinks[dlIdx].isActive || dl.isActive,
             };
           }
         }
