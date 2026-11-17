@@ -13,8 +13,15 @@ import { isPostgresConfigured, loadDbFromPostgres, syncMutationToPostgres } from
  * Swapping to Prisma later means re-implementing this module only.
  */
 
-const DATA_DIR = path.join(process.cwd(), "data");
+import os from "node:os";
+
+// Detect if running on Vercel or read-only serverless environment
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = isServerless
+  ? path.join(os.tmpdir(), "mug1iii-data")
+  : path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
+const BUNDLED_DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 const EMPTY: DbShape = {
   users: [],
@@ -50,7 +57,12 @@ async function readFromDisk(): Promise<DbShape> {
   }
 
   try {
-    const raw = await fs.readFile(DB_PATH, "utf8");
+    let raw: string;
+    try {
+      raw = await fs.readFile(DB_PATH, "utf8");
+    } catch {
+      raw = await fs.readFile(BUNDLED_DB_PATH, "utf8");
+    }
     const parsed = JSON.parse(raw) as Partial<DbShape>;
     const merged = { ...EMPTY, ...parsed };
     if (
@@ -58,7 +70,7 @@ async function readFromDisk(): Promise<DbShape> {
       merged.albums.some((a) => a.slug === "nocturne-in-copper")
     ) {
       const fresh = buildSeedDb();
-      await persist(fresh);
+      await persist(fresh).catch(() => undefined);
       return fresh;
     }
     return merged;
@@ -70,10 +82,14 @@ async function readFromDisk(): Promise<DbShape> {
 }
 
 async function persist(data: DbShape) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const tmp = `${DB_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-  await fs.rename(tmp, DB_PATH);
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    const tmp = `${DB_PATH}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+    await fs.rename(tmp, DB_PATH);
+  } catch (err) {
+    console.warn("[db] persist skipped or failed:", err);
+  }
 }
 
 /** Serialise every mutation so concurrent route handlers never clobber the file. */
