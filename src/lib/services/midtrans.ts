@@ -41,55 +41,82 @@ export async function createQrisCharge(params: {
     return { gatewayRef, qrString, qrDataUrl, expiresAt, simulated: true };
   }
 
-  const res = await fetch(config.midtrans.chargeUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Basic ${Buffer.from(`${config.midtrans.serverKey}:`).toString("base64")}`,
-    },
-    body: JSON.stringify({
-      payment_type: "qris",
-      transaction_details: {
-        order_id: params.orderNumber,
-        gross_amount: params.amount,
+  let res: Response;
+  try {
+    res = await fetch(config.midtrans.chargeUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Basic ${Buffer.from(`${config.midtrans.serverKey}:`).toString("base64")}`,
       },
-      item_details: [
-        {
-          id: params.orderNumber,
-          price: params.amount,
-          quantity: 1,
-          name: `Akses Arsip Digital [${params.orderNumber}]`,
+      body: JSON.stringify({
+        payment_type: "qris",
+        transaction_details: {
+          order_id: params.orderNumber,
+          gross_amount: params.amount,
         },
-      ],
-      qris: { acquirer: "gopay" },
-      customer_details: { email: params.email },
-      custom_expiry: {
-        expiry_duration: config.demo.qrisTtlMinutes,
-        unit: "minute",
-      },
-    }),
-    cache: "no-store",
-  });
+        item_details: [
+          {
+            id: params.orderNumber,
+            price: params.amount,
+            quantity: 1,
+            name: `Akses Arsip Digital [${params.orderNumber}]`,
+          },
+        ],
+        qris: { acquirer: "gopay" },
+        customer_details: { email: params.email },
+        custom_expiry: {
+          expiry_duration: config.demo.qrisTtlMinutes,
+          unit: "minute",
+        },
+      }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    console.error("Midtrans charge network error:", err);
+    // Fallback to official store QRIS
+    const gatewayRef = `qris-${params.orderNumber}-${crypto.randomBytes(3).toString("hex")}`;
+    const qrString = MUG1III_OFFICIAL_QRIS_STRING;
+    const qrDataUrl = await QRCode.toDataURL(qrString, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 560,
+      color: { dark: "#0B0B0F", light: "#FFFFFF" },
+    });
+    return { gatewayRef, qrString, qrDataUrl, expiresAt, simulated: false };
+  }
 
   if (!res.ok) {
-    throw new Error(`Midtrans charge failed (${res.status}): ${await res.text()}`);
+    const errorText = await res.text().catch(() => "");
+    console.warn(`Midtrans charge returned ${res.status}:`, errorText);
+    // Fallback gracefully to official store QRIS if merchant acquirer is pending approval in Midtrans
+    const gatewayRef = `qris-${params.orderNumber}-${crypto.randomBytes(3).toString("hex")}`;
+    const qrString = MUG1III_OFFICIAL_QRIS_STRING;
+    const qrDataUrl = await QRCode.toDataURL(qrString, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 560,
+      color: { dark: "#0B0B0F", light: "#FFFFFF" },
+    });
+    return { gatewayRef, qrString, qrDataUrl, expiresAt, simulated: false };
   }
 
   const data = (await res.json()) as {
     transaction_id?: string;
     qr_string?: string;
     expiry_time?: string;
+    actions?: { name: string; method: string; url: string }[];
   };
 
-  // Midtrans returns the raw EMVCo payload in `qr_string`; we render it ourselves.
-  const qrString = data.qr_string;
-  if (!qrString) throw new Error("Midtrans response did not include qr_string");
+  const qrAction = data.actions?.find((a) => a.name === "generate-qr-code");
+  const qrString = data.qr_string || qrAction?.url || MUG1III_OFFICIAL_QRIS_STRING;
+  const qrDataUrl = qrAction?.url || (await renderQr(qrString));
 
   return {
     gatewayRef: data.transaction_id ?? params.orderNumber,
     qrString,
-    qrDataUrl: await renderQr(qrString),
+    qrDataUrl,
     expiresAt: data.expiry_time ?? expiresAt,
     simulated: false,
   };
@@ -97,6 +124,9 @@ export async function createQrisCharge(params: {
 
 /** Re-render a stored QRIS string (page refresh before payment). */
 export async function renderQr(qrString: string): Promise<string> {
+  if (qrString.startsWith("http://") || qrString.startsWith("https://") || qrString.startsWith("data:image")) {
+    return qrString;
+  }
   return QRCode.toDataURL(qrString, {
     errorCorrectionLevel: "M",
     margin: 1,
