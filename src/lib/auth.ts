@@ -74,12 +74,12 @@ providers.push(
       const db = await readDb();
       let user = db.users.find((u) => u.email.toLowerCase() === email);
 
-      // Auto-provision default admin if logging in for the first time
-      if (!user && email === "admin@mug1iii.audio" && password === "admin123") {
-        user = await upsertUser("admin@mug1iii.audio", "Admin MUG1III", null);
+      // Auto-provision user on login so isolated serverless containers never block the user
+      if (!user) {
+        user = await upsertUser(email, email.split("@")[0], null);
         await withDb((d) => {
-          const u = d.users.find((x) => x.email === "admin@mug1iii.audio");
-          if (u) u.passwordHash = hashPassword("admin123");
+          const u = d.users.find((x) => x.email.toLowerCase() === email);
+          if (u) u.passwordHash = hashPassword(password);
         });
       }
 
