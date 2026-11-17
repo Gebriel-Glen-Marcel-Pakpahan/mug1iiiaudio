@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { confirmOrderPayment, getOrderForUser, syncOrderPayment } from "@/lib/repo";
-import { config } from "@/lib/config";
+import { getOrderForUser, grantAccess, syncOrderPayment } from "@/lib/repo";
 import { jsonError, requireUser } from "@/lib/session";
 import { attachOrderCookies } from "@/lib/order-cookie";
 
@@ -8,42 +7,64 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/orders/:id/confirm
- * Validates and completes payment when testing with real QRIS or when customer confirms transfer.
+ * Strictly verifies whether the order has actually been paid (via Midtrans API or Admin verification).
+ * NEVER auto-approves an unpaid order. If unpaid, returns status: "PENDING" and paid: false.
  */
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const order = await getOrderForUser(params.id, user.id);
-    if (!order) return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
+    let order = await getOrderForUser(params.id, user.id);
+    if (!order) {
+      return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
+    }
 
-    // In live Midtrans mode, check if Midtrans has already recorded the payment
-    if (config.midtrans.isConfigured) {
+    // Actively check payment status against Midtrans
+    if (order.status === "PENDING") {
       const synced = await syncOrderPayment(params.id);
-      if (synced && (synced.status === "PAID" || synced.status === "REFUNDED")) {
-        const res = NextResponse.json({
-          status: synced.status,
-          paymentStatus: synced.paymentStatus,
-          accessStatus: synced.accessStatus,
-          paidAt: synced.paidAt,
-        });
-        attachOrderCookies(res, synced);
-        return res;
+      if (synced) order = synced;
+    }
+
+    // If order is genuinely PAID, ensure Google Drive access links are granted and ready
+    if (order.status === "PAID") {
+      if (order.accessStatus !== "GRANTED" || !order.driveLinks?.length) {
+        await grantAccess(order.id);
+        const refreshed = await getOrderForUser(params.id, user.id);
+        if (refreshed) order = refreshed;
       }
+
+      const res = NextResponse.json(
+        {
+          paid: true,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          accessStatus: order.accessStatus,
+          paidAt: order.paidAt,
+          driveLinks: order.driveLinks ?? [],
+          checkedAt: new Date().toISOString(),
+          message: "Pembayaran telah terverifikasi lunas. Akses Google Drive aktif.",
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+      attachOrderCookies(res, order);
+      return res;
     }
 
-    // Direct / manual payment confirmation
-    const confirmed = await confirmOrderPayment(params.id, user.email);
-    if (!confirmed) {
-      return NextResponse.json({ error: "Gagal memproses konfirmasi pembayaran." }, { status: 500 });
-    }
-
-    const res = NextResponse.json({
-      status: confirmed.status,
-      paymentStatus: confirmed.paymentStatus,
-      accessStatus: confirmed.accessStatus,
-      paidAt: confirmed.paidAt,
-    });
-    attachOrderCookies(res, confirmed);
+    // Order is NOT paid yet (still PENDING / CANCELLED) — strictly block Drive access
+    const res = NextResponse.json(
+      {
+        paid: false,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        accessStatus: order.accessStatus,
+        paidAt: null,
+        driveLinks: [],
+        checkedAt: new Date().toISOString(),
+        message:
+          "Pembayaran belum diterima di sistem. Silakan pindai kode QRIS dan selesaikan transfer terlebih dahulu.",
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+    attachOrderCookies(res, order);
     return res;
   } catch (err) {
     return jsonError(err);

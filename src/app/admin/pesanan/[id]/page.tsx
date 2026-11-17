@@ -5,7 +5,7 @@ import { getOrderById, listAudit } from "@/lib/repo";
 import { readDb } from "@/lib/db";
 import { formatDateTime, formatIDR } from "@/lib/utils";
 import { StatusBadge } from "@/components/status-badge";
-import { RefundDecision, RetryAccessButton } from "@/components/admin/admin-actions";
+import { ApproveOrderButton, RefundDecision, RetryAccessButton } from "@/components/admin/admin-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Detail pesanan" };
@@ -100,6 +100,11 @@ export default async function AdminOrderDetail({ params }: { params: { id: strin
               </div>
             ))}
           </dl>
+          {order.status === "PENDING" && (
+            <div className="border-t border-white/[0.07] pt-4">
+              <ApproveOrderButton orderId={order.id} />
+            </div>
+          )}
           {order.status === "PAID" && order.accessStatus !== "GRANTED" && (
             <RetryAccessButton orderId={order.id} />
           )}

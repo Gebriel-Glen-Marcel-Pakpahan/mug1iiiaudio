@@ -128,7 +128,7 @@ export default async function OrderDetailPage({ params }: { params: { id: string
             ))}
           </ul>
 
-          {canAccess && (
+          {canAccess ? (
             <div className="mt-5 flex items-start gap-3 border border-gold/20 bg-gold/[0.04] p-4">
               <Download size={14} className="mt-0.5 shrink-0 text-gold" />
               <div>
@@ -139,6 +139,23 @@ export default async function OrderDetailPage({ params }: { params: { id: string
                   terbuka di Google Drive — pilih file lalu tekan Download.
                 </p>
               </div>
+            </div>
+          ) : (
+            <div className="mt-5 border border-signal-bad/40 bg-signal-bad/10 p-5">
+              <p className="font-mono text-xs font-semibold uppercase tracking-wider text-signal-bad">
+                Status: Belum Dibayar — Link Google Drive Terkunci
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-ink-mute">
+                Pesanan ini belum memiliki pembayaran yang terverifikasi. Silakan selesaikan pembayaran
+                QRIS terlebih dahulu untuk membuka tautan unduhan Google Drive.
+              </p>
+              <Link
+                href={`/bayar/${order.id}`}
+                className="btn-gold btn-sm mt-4 inline-flex items-center gap-2"
+              >
+                Lanjutkan Pembayaran QRIS &amp; Cek Status
+                <ArrowUpRight size={13} />
+              </Link>
             </div>
           )}
 

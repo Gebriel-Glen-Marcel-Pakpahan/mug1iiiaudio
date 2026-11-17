@@ -25,12 +25,13 @@ export function toOrderView(db: DbShape, order: Order): OrderView {
   const albums = order.items
     .map((i) => db.albums.find((a) => a.id === i.albumId))
     .filter((a): a is Album => Boolean(a));
+  const isPaid = order.status === "PAID" || order.status === "REFUNDED";
   return {
     ...order,
     albumTitles: albums.map((a) => a.title),
     userEmail: user?.email ?? "—",
     payment: db.payments.find((p) => p.orderId === order.id) ?? null,
-    driveLinks: db.driveLinks.filter((d) => d.orderId === order.id),
+    driveLinks: isPaid ? db.driveLinks.filter((d) => d.orderId === order.id) : [],
     refund: db.refunds.find((r) => r.orderId === order.id) ?? null,
   };
 }
@@ -280,10 +281,9 @@ export async function handleWebhook(payload: {
     return { state: "ignored" as const, orderId: order.id };
   });
 
-  // Grant access outside the webhook transaction — PRD v2.1 note.
+  // Grant access before serverless execution completes so driveLinks and emails are guaranteed.
   if (outcome.state === "paid" && outcome.orderId) {
-    // fire-and-forget worker
-    void grantAccess(outcome.orderId);
+    await grantAccess(outcome.orderId);
   }
 
   return { ok: true as const, ...outcome };
@@ -291,13 +291,20 @@ export async function handleWebhook(payload: {
 
 /**
  * Actively syncs an order's payment status directly with Midtrans.
- * Crucial when running on localhost where Midtrans webhooks cannot reach the local machine.
+ * Crucial when running on localhost or serverless where webhook delivery may be delayed.
  */
 export async function syncOrderPayment(orderId: string): Promise<OrderView | null> {
   const db = await readDb();
   const order = db.orders.find((o) => o.id === orderId);
-  if (!order || order.status !== "PENDING" || !config.midtrans.isConfigured) {
-    return order ? toOrderView(db, order) : null;
+  if (!order) return null;
+
+  if (order.status === "PAID" && order.accessStatus !== "GRANTED") {
+    await grantAccess(orderId);
+    return getOrderById(orderId);
+  }
+
+  if (order.status !== "PENDING" || !config.midtrans.isConfigured) {
+    return toOrderView(db, order);
   }
 
   const live = await fetchMidtransStatus(order.orderNumber);

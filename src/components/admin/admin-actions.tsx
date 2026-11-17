@@ -14,6 +14,40 @@ async function post(url: string, body?: unknown) {
   if (!res.ok) throw new Error(data.error ?? "Aksi gagal.");
 }
 
+export function ApproveOrderButton({ orderId }: { orderId: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    if (!confirm("Verifikasi bahwa dana QRIS telah diterima dan aktifkan akses Google Drive pembeli?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/api/admin/orders/${orderId}/approve`);
+      router.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <button onClick={run} disabled={busy} className="btn-gold btn-sm w-full justify-center">
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+        Verifikasi Lunas &amp; Buka Akses Drive
+      </button>
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-signal-bad">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function RetryAccessButton({ orderId }: { orderId: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
