@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Check, Loader2, Plus, ShoppingBag } from "lucide-react";
+import { ArrowRight, Check, Loader2, Plus, ShoppingBag } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle: string }) {
@@ -11,6 +11,29 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
   const router = useRouter();
   const [state, setState] = useState<"idle" | "loading" | "added" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
+
+  async function buyNow() {
+    if (!session?.user) {
+      router.push(`/masuk?next=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
+    setState("loading");
+    setMessage(null);
+    try {
+      const res = await fetch("/api/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ albumId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal memproses pembelian.");
+      router.push("/checkout");
+    } catch (err) {
+      setState("error");
+      setMessage(err instanceof Error ? err.message : "Gagal memproses pembelian.");
+      setTimeout(() => setState("idle"), 3000);
+    }
+  }
 
   async function add() {
     if (!session?.user) {
@@ -43,23 +66,30 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          onClick={buyNow}
+          disabled={state === "loading"}
+          className="btn-gold min-w-[12rem] justify-center"
+        >
+          {state === "loading" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <ArrowRight size={15} />
+          )}
+          Beli Sekarang
+        </button>
+
         <button
           onClick={add}
           disabled={state === "loading"}
           className={cn(
-            "btn-gold min-w-[15rem]",
-            state === "added" && "!bg-none !bg-signal-ok !text-carbon-950",
+            "btn-outline",
+            state === "added" && "!border-signal-ok !text-signal-ok",
           )}
         >
-          {state === "loading" ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : state === "added" ? (
-            <Check size={15} />
-          ) : (
-            <Plus size={15} />
-          )}
-          {state === "added" ? "Ditambahkan" : "Tambah ke keranjang"}
+          {state === "added" ? <Check size={14} /> : <Plus size={14} />}
+          {state === "added" ? "Ditambahkan" : "+ Keranjang"}
         </button>
 
         <button

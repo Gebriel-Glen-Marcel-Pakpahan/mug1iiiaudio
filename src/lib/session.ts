@@ -1,15 +1,42 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "./auth";
-import { readDb } from "./db";
+import { readDb, withDb } from "./db";
+import { config } from "./config";
 import type { User } from "./types";
 
 export async function getSessionUser(): Promise<User | null> {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email;
   if (!email) return null;
+
+  const normalizedEmail = email.toLowerCase().trim();
   const db = await readDb();
-  return db.users.find((u) => u.email.toLowerCase() === email.toLowerCase()) ?? null;
+  let user = db.users.find((u) => u.email.toLowerCase() === normalizedEmail);
+
+  if (!user) {
+    const isAdmin = config.auth.adminEmails.includes(normalizedEmail);
+    const userId = (session.user as { id?: string }).id || `usr_${Math.random().toString(36).slice(2, 10)}`;
+    const role = isAdmin ? "ADMIN" : (((session.user as { role?: string }).role as any) || "BUYER");
+
+    user = await withDb(async (d) => {
+      let existing = d.users.find((u) => u.email.toLowerCase() === normalizedEmail);
+      if (!existing) {
+        existing = {
+          id: userId,
+          email: normalizedEmail,
+          name: session.user?.name || normalizedEmail.split("@")[0],
+          avatarUrl: session.user?.image || null,
+          role,
+          createdAt: new Date().toISOString(),
+        };
+        d.users.push(existing);
+      }
+      return existing;
+    });
+  }
+
+  return user;
 }
 
 export class ApiError extends Error {
