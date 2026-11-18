@@ -23,6 +23,11 @@ interface DiagnosticsData {
   database: {
     type: string;
   };
+  danaWebhook?: {
+    status: string;
+    endpoint: string;
+    secret: string;
+  };
 }
 
 export function SystemDiagnostics() {
@@ -81,7 +86,7 @@ export function SystemDiagnostics() {
       )}
 
       {data && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 text-xs">
           {/* Midtrans */}
           <div className="border border-white/[0.08] bg-carbon-900/60 p-3.5 space-y-1.5">
             <p className="font-mono text-2xs uppercase tracking-label text-ink-faint">Midtrans Gateway</p>
@@ -105,6 +110,17 @@ export function SystemDiagnostics() {
                 {data.midtrans.qrisStatus}
               </span>
             </div>
+          </div>
+
+          {/* DANA Webhook Gateway */}
+          <div className="border border-white/[0.08] bg-carbon-900/60 p-3.5 space-y-1.5">
+            <p className="font-mono text-2xs uppercase tracking-label text-ink-faint">DANA Webhook (HP)</p>
+            <div className="flex items-center gap-1.5 font-semibold">
+              <CheckCircle2 size={13} className="text-signal-ok" />
+              <span className="text-signal-ok">Gateway Aktif</span>
+            </div>
+            <p className="font-mono text-[0.625rem] text-ink-mute truncate">/api/webhooks/dana</p>
+            <p className="text-[0.625rem] text-gold-bright">Otomatis via Notif HP</p>
           </div>
 
           {/* Database */}

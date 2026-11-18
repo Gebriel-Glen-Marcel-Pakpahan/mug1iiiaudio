@@ -115,12 +115,20 @@ export async function GET() {
       type: isPostgresConfigured() ? "PostgreSQL (DATABASE_URL terhubung)" : "Local / Temporary JSON Database",
     };
 
+    // 5. DANA Webhook Gateway
+    const danaWebhookDiagnostics = {
+      status: "Aktif",
+      endpoint: "/api/webhooks/dana",
+      secret: process.env.DANA_WEBHOOK_SECRET || "mug1iii-dana-secret-2026",
+    };
+
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       midtrans: midtransDiagnostics,
       gdrive: gdriveDiagnostics,
       email: emailDiagnostics,
       database: databaseDiagnostics,
+      danaWebhook: danaWebhookDiagnostics,
     });
   } catch (err) {
     return jsonError(err);

@@ -399,6 +399,67 @@ export async function confirmOrderPayment(orderId: string, actorEmail: string): 
   return getOrderById(outcome.orderId);
 }
 
+/**
+ * Confirms order payment via automated webhook matching (DANA, e-wallet, bank notification).
+ * Matches by explicit order number/ID or by exact nominal amount among PENDING orders.
+ */
+export async function confirmOrderByAmountOrNumber(opts: {
+  amount?: number;
+  orderNumber?: string;
+  actorEmail?: string;
+}): Promise<{ matched: boolean; order?: OrderView; error?: string; alreadyFinal?: boolean }> {
+  const db = await readDb();
+
+  // 1. Try matching by order number / ID first
+  let targetOrder: Order | undefined;
+  if (opts.orderNumber) {
+    const term = opts.orderNumber.trim().toLowerCase();
+    targetOrder = db.orders.find(
+      (o) =>
+        o.orderNumber.toLowerCase() === term ||
+        o.id.toLowerCase() === term
+    );
+  }
+
+  // 2. If not found by number, match newest PENDING order by exact total amount
+  if (!targetOrder && opts.amount && opts.amount > 0) {
+    const pendingWithAmount = db.orders
+      .filter((o) => o.status === "PENDING" && o.totalAmount === opts.amount)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    targetOrder = pendingWithAmount[0];
+  }
+
+  if (!targetOrder) {
+    return {
+      matched: false,
+      error: `Tidak ada pesanan aktif (PENDING) yang cocok dengan ${
+        opts.orderNumber ? `nomor ${opts.orderNumber}` : `nominal Rp ${opts.amount?.toLocaleString("id-ID")}`
+      }.`,
+    };
+  }
+
+  if (targetOrder.status === "PAID" || targetOrder.status === "REFUNDED") {
+    const view = await getOrderById(targetOrder.id);
+    return {
+      matched: true,
+      order: view ?? undefined,
+      alreadyFinal: true,
+    };
+  }
+
+  const updated = await confirmOrderPayment(
+    targetOrder.id,
+    opts.actorEmail || "dana-webhook@mug1iii.audio"
+  );
+
+  return {
+    matched: true,
+    order: updated ?? undefined,
+    alreadyFinal: false,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Worker — grant Drive access (idempotent + retry)                    */
 /* ------------------------------------------------------------------ */
