@@ -171,8 +171,9 @@ export async function checkImapPaymentNotification(params: {
   if (!creds) return false;
 
   const amountPlain = String(params.amount);
-  const amountFormatted = rupiah(params.amount); // e.g. "10.000"
-  const orderCreatedMs = new Date(params.createdAt).getTime() - 60_000;
+  const amountFormatted = rupiah(params.amount); // e.g. "4.500" or "10.000"
+  // Allow 3 minutes clock-skew tolerance between server time and payment timestamp
+  const orderCreatedMs = new Date(params.createdAt).getTime() - 180_000;
 
   return new Promise<boolean>((resolve) => {
     let settled = false;
@@ -187,7 +188,7 @@ export async function checkImapPaymentNotification(params: {
       resolve(val);
     };
 
-    const timer = setTimeout(() => finish(false), 3800);
+    const timer = setTimeout(() => finish(false), 4500);
     const sock = tls.connect({ host: "imap.gmail.com", port: 993, servername: "imap.gmail.com" });
 
     let step = 0;
@@ -219,10 +220,11 @@ export async function checkImapPaymentNotification(params: {
           clearTimeout(timer);
           return finish(false);
         }
-        const startSeq = Math.max(1, totalMsgs - 14);
+        const startSeq = Math.max(1, totalMsgs - 19);
         step = 3;
         buf = "";
-        sock.write(`A3 FETCH ${startSeq}:${totalMsgs} (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.1500>)\r\n`);
+        // Fetch headers + top 3000 bytes of MIME body to catch both plain-text and HTML emails
+        sock.write(`A3 FETCH ${startSeq}:${totalMsgs} (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[]<0.3000>)\r\n`);
       } else if (step === 3 && (buf.includes("A3 OK") || buf.includes("A3 NO") || buf.includes("A3 BAD"))) {
         clearTimeout(timer);
         const raw = buf;
@@ -234,9 +236,10 @@ export async function checkImapPaymentNotification(params: {
             if (!Number.isNaN(msgMs) && msgMs < orderCreatedMs) continue;
           }
           const lower = blk.toLowerCase();
-          // Must come from a recognized payment/bank/QRIS notification keywords
+          // Must come from a recognized payment/e-wallet/bank/QRIS notification
           const isPaymentNotice =
             lower.includes("dana") ||
+            lower.includes("espay") ||
             lower.includes("qris") ||
             lower.includes("midtrans") ||
             lower.includes("gopay") ||
@@ -249,7 +252,8 @@ export async function checkImapPaymentNotification(params: {
             lower.includes("seabank") ||
             lower.includes("jago") ||
             lower.includes("shopeepay") ||
-            lower.includes("ovo");
+            lower.includes("ovo") ||
+            lower.includes("transfer");
 
           const hasSuccessWord =
             lower.includes("berhasil") ||
@@ -258,7 +262,10 @@ export async function checkImapPaymentNotification(params: {
             lower.includes("settlement") ||
             lower.includes("paid") ||
             lower.includes("lunas") ||
-            lower.includes("sukses");
+            lower.includes("sukses") ||
+            lower.includes("terima") ||
+            lower.includes("penerimaan") ||
+            lower.includes("received");
 
           const hasAmountOrOrder =
             blk.includes(params.orderNumber) ||
@@ -266,7 +273,8 @@ export async function checkImapPaymentNotification(params: {
             blk.includes(`Rp ${amountFormatted}`) ||
             blk.includes(`IDR ${amountFormatted}`) ||
             blk.includes(`Rp${amountPlain}`) ||
-            blk.includes(`Rp ${amountPlain}`);
+            blk.includes(`Rp ${amountPlain}`) ||
+            blk.includes(amountFormatted);
 
           if (isPaymentNotice && hasSuccessWord && hasAmountOrOrder) {
             return finish(true);
