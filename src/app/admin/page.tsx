@@ -4,6 +4,7 @@ import { adminStats } from "@/lib/repo";
 import { formatIDR, formatDate, formatDateTime, statusLabel } from "@/lib/utils";
 import { StatusBadge } from "@/components/status-badge";
 import { getOutbox } from "@/lib/services/email";
+import { SystemDiagnostics } from "@/components/admin/system-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export default async function AdminDashboard() {
 
   return (
     <div className="space-y-8">
+      <SystemDiagnostics />
+
       <section>
         <div className="grid gap-px overflow-hidden border border-white/[0.08] bg-white/[0.06] sm:grid-cols-2 lg:grid-cols-3">
           {kpis.map((k) => (

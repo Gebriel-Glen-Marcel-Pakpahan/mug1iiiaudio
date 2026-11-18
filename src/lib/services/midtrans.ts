@@ -78,15 +78,18 @@ export async function createQrisCharge(params: {
       status_message?: string;
       transaction_id?: string;
       qr_string?: string;
+      actions?: { name: string; method: string; url: string }[];
     };
-    if (!res.ok || !data.qr_string) {
+    const qrAction = data.actions?.find((a) => a.name === "generate-qr-code");
+    const validQr = data.qr_string || qrAction?.url;
+    if (!res.ok || !validQr) {
       console.warn("[midtrans] charge refused, using store QRIS:", res.status, data.status_code, data.status_message);
       return storeQrisCharge(params.orderNumber, params.amount, expiresAt, false);
     }
     return {
       gatewayRef: data.transaction_id ?? params.orderNumber,
-      qrString: data.qr_string,
-      qrDataUrl: await renderQr(data.qr_string),
+      qrString: validQr,
+      qrDataUrl: await renderQr(validQr),
       expiresAt,
       simulated: false,
     };
