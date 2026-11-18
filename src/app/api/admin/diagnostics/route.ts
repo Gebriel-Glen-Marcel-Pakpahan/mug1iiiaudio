@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { jsonError, requireAdmin } from "@/lib/session";
-import { isPostgresConfigured } from "@/lib/postgres";
+import { isPostgresConfigured, getPool, ensurePostgresSchema } from "@/lib/postgres";
 
 export const dynamic = "force-dynamic";
 
@@ -111,8 +111,38 @@ export async function GET() {
     };
 
     // 4. Database check
+    let dbStatus = "Local / Temporary JSON Database";
+    let dbConnected = false;
+    let tableCount = 0;
+    let albumCount = 0;
+
+    if (isPostgresConfigured()) {
+      try {
+        const pool = getPool();
+        if (pool) {
+          await ensurePostgresSchema(pool);
+          const tRes = await pool.query(
+            `SELECT count(*)::int as c FROM information_schema.tables WHERE table_schema = 'public'`,
+          );
+          tableCount = tRes.rows[0]?.c ?? 0;
+
+          const aRes = await pool.query(`SELECT count(*)::int as c FROM albums`);
+          albumCount = aRes.rows[0]?.c ?? 0;
+
+          dbConnected = true;
+          dbStatus = `PostgreSQL / Supabase Terhubung (${tableCount} tabel, ${albumCount} album siap)`;
+        }
+      } catch (e) {
+        dbStatus = `PostgreSQL Error: ${(e as Error).message}`;
+      }
+    }
+
     const databaseDiagnostics = {
-      type: isPostgresConfigured() ? "PostgreSQL (DATABASE_URL terhubung)" : "Local / Temporary JSON Database",
+      type: dbStatus,
+      isConfigured: isPostgresConfigured(),
+      isConnected: dbConnected,
+      tables: tableCount,
+      albums: albumCount,
     };
 
     // 5. DANA Webhook Gateway

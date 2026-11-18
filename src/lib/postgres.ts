@@ -5,13 +5,25 @@ let pool: Pool | null = null;
 let schemaInitialized = false;
 
 export function isPostgresConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+  return Boolean(
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.SUPABASE_DATABASE_URL,
+  );
 }
 
 export function getPool(): Pool | null {
   if (!isPostgresConfigured()) return null;
   if (!pool) {
-    const conn = (process.env.DATABASE_URL || process.env.POSTGRES_URL)!.trim();
+    const conn = (
+      process.env.POSTGRES_URL ||
+      process.env.DATABASE_URL ||
+      process.env.POSTGRES_PRISMA_URL ||
+      process.env.POSTGRES_URL_NON_POOLING ||
+      process.env.SUPABASE_DATABASE_URL
+    )!.trim();
     pool = new Pool({
       connectionString: conn,
       max: 10,
