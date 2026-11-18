@@ -45,23 +45,128 @@ function extractOrderNumber(text: string): string | null {
   return match ? match[0].toUpperCase() : null;
 }
 
+async function processDanaPayment({
+  amount,
+  orderNumber,
+  rawNotification,
+  actorEmail,
+}: {
+  amount?: number | null;
+  orderNumber?: string | null;
+  rawNotification?: string;
+  actorEmail: string;
+}) {
+  let finalAmount = amount;
+  let finalOrderNumber = orderNumber;
+
+  if (rawNotification) {
+    if (!finalAmount) finalAmount = extractAmountFromText(rawNotification);
+    if (!finalOrderNumber) finalOrderNumber = extractOrderNumber(rawNotification);
+  }
+
+  if (!finalAmount && !finalOrderNumber) {
+    return {
+      success: false,
+      status: 400,
+      data: {
+        error: "invalid_payload",
+        message: "Tidak dapat mendeteksi nominal atau nomor pesanan dari data notifikasi yang dikirimkan.",
+      },
+    };
+  }
+
+  const outcome = await confirmOrderByAmountOrNumber({
+    amount: finalAmount ?? undefined,
+    orderNumber: finalOrderNumber ?? undefined,
+    actorEmail,
+  });
+
+  if (!outcome.matched || !outcome.order) {
+    return {
+      success: false,
+      status: 404,
+      data: {
+        ok: false,
+        message: outcome.error || "Pesanan tidak ditemukan atau tidak berstatus PENDING.",
+        searched: { amount: finalAmount, orderNumber: finalOrderNumber },
+      },
+    };
+  }
+
+  return {
+    success: true,
+    status: 200,
+    data: {
+      ok: true,
+      message: outcome.alreadyFinal
+        ? "Pesanan ini sudah pernah diverifikasi lunas sebelumnya (idempotent)."
+        : `Pesanan ${outcome.order.orderNumber} senilai Rp ${outcome.order.totalAmount.toLocaleString("id-ID")} berhasil diverifikasi lunas! Akses Google Drive telah dikirim ke ${outcome.order.userEmail}.`,
+      order: {
+        id: outcome.order.id,
+        orderNumber: outcome.order.orderNumber,
+        totalAmount: outcome.order.totalAmount,
+        status: outcome.order.status,
+        accessStatus: outcome.order.accessStatus,
+        userEmail: outcome.order.userEmail,
+        driveLinksCount: outcome.order.driveLinks?.length ?? 0,
+      },
+    },
+  };
+}
+
 /**
  * GET /api/webhooks/dana
- * Returns integration status, documentation, and webhook setup guide.
+ * - If called without payment params: returns endpoint guide and status.
+ * - If called with ?secret=...&amount=5500: allows quick testing directly from any browser!
  */
-export async function GET() {
-  const secretKey = process.env.DANA_WEBHOOK_SECRET || DEFAULT_SECRET;
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const configuredSecret = process.env.DANA_WEBHOOK_SECRET || DEFAULT_SECRET;
+  const providedSecret = url.searchParams.get("secret") || req.headers.get("x-dana-secret");
+
+  // Quick browser test if amount or order or notification param is present
+  const hasPaymentParam =
+    url.searchParams.has("amount") ||
+    url.searchParams.has("order") ||
+    url.searchParams.has("notification") ||
+    url.searchParams.has("text");
+
+  if (hasPaymentParam) {
+    if (providedSecret !== configuredSecret) {
+      return NextResponse.json(
+        { error: "unauthorized", message: "Secret webhook token tidak valid atau belum diisi." },
+        { status: 401 },
+      );
+    }
+
+    const qAmount = url.searchParams.get("amount") ? parseInt(url.searchParams.get("amount")!, 10) : null;
+    const qOrder = url.searchParams.get("order") || url.searchParams.get("orderNumber");
+    const qNotif = url.searchParams.get("notification") || url.searchParams.get("text");
+
+    const result = await processDanaPayment({
+      amount: !isNaN(Number(qAmount)) ? qAmount : null,
+      orderNumber: qOrder,
+      rawNotification: qNotif || undefined,
+      actorEmail: "browser-test-webhook@mug1iii.audio",
+    });
+
+    return NextResponse.json(result.data, { status: result.status });
+  }
+
+  // Default GET response: Documentation & instructions
   return NextResponse.json(
     {
       status: "active",
       endpoint: "/api/webhooks/dana",
       description: "Automated webhook receiver for DANA Bisnis push notifications (MacroDroid / Tasker / Forwarder)",
-      secret: secretKey,
+      secret: configuredSecret,
+      browserTestUrlExample: `${url.origin}/api/webhooks/dana?secret=${configuredSecret}&amount=5500`,
       quickGuide: {
         method: "POST",
+        url: `${url.origin}/api/webhooks/dana?secret=${configuredSecret}`,
         headers: {
           "Content-Type": "application/json",
-          "x-dana-secret": secretKey,
+          "x-dana-secret": configuredSecret,
         },
         bodyFormat: {
           notification: "Kamu menerima pembayaran sebesar Rp 5.500 dari...",
@@ -119,14 +224,14 @@ export async function POST(req: Request) {
     );
   }
 
-  // 1. Identify order number if provided directly or embedded in text
+  // 1. Order number
   let orderNumber: string | null = null;
   if (typeof rawBody.order_id === "string") orderNumber = rawBody.order_id;
   if (typeof rawBody.orderNumber === "string") orderNumber = rawBody.orderNumber;
   if (typeof rawBody.order === "string") orderNumber = rawBody.order;
   if (url.searchParams.get("order")) orderNumber = url.searchParams.get("order");
 
-  // 2. Identify amount
+  // 2. Amount
   let amount: number | null = null;
   if (typeof rawBody.amount === "number") amount = rawBody.amount;
   if (typeof rawBody.amount === "string") amount = extractAmountFromText(rawBody.amount);
@@ -140,64 +245,25 @@ export async function POST(req: Request) {
     if (!isNaN(qAmount) && qAmount > 0) amount = qAmount;
   }
 
-  // 3. If amount or orderNumber not found, parse notification/message fields
+  // 3. Notification text
   const notificationText =
     (typeof rawBody.notification === "string" && rawBody.notification) ||
     (typeof rawBody.message === "string" && rawBody.message) ||
+    (typeof rawBody.content === "string" && rawBody.content) ||
     (typeof rawBody.text === "string" && rawBody.text) ||
     (typeof rawBody.body === "string" && rawBody.body) ||
+    (typeof rawBody.msg === "string" && rawBody.msg) ||
+    (typeof rawBody.desc === "string" && rawBody.desc) ||
+    url.searchParams.get("notification") ||
+    url.searchParams.get("text") ||
     "";
 
-  if (notificationText) {
-    if (!amount) amount = extractAmountFromText(notificationText);
-    if (!orderNumber) orderNumber = extractOrderNumber(notificationText);
-  }
-
-  if (!amount && !orderNumber) {
-    return NextResponse.json(
-      {
-        error: "invalid_payload",
-        message: "Tidak dapat mendeteksi nominal atau nomor pesanan dari data yang dikirimkan.",
-        received: rawBody,
-      },
-      { status: 400 },
-    );
-  }
-
-  // 4. Confirm and unlock order
-  const outcome = await confirmOrderByAmountOrNumber({
-    amount: amount ?? undefined,
-    orderNumber: orderNumber ?? undefined,
-    actorEmail: "dana-webhook@mug1iii.audio",
+  const result = await processDanaPayment({
+    amount,
+    orderNumber,
+    rawNotification: notificationText || undefined,
+    actorEmail: "dana-push-webhook@mug1iii.audio",
   });
 
-  if (!outcome.matched || !outcome.order) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: outcome.error || "Pesanan tidak ditemukan atau tidak berstatus PENDING.",
-        searched: { amount, orderNumber },
-      },
-      { status: 404 },
-    );
-  }
-
-  return NextResponse.json(
-    {
-      ok: true,
-      message: outcome.alreadyFinal
-        ? "Pesanan ini sudah pernah dikonfirmasi sebelumnya (idempotent)."
-        : `Pesanan ${outcome.order.orderNumber} senilai Rp ${outcome.order.totalAmount.toLocaleString("id-ID")} berhasil diverifikasi lunas! Akses Google Drive telah dikirim ke ${outcome.order.userEmail}.`,
-      order: {
-        id: outcome.order.id,
-        orderNumber: outcome.order.orderNumber,
-        totalAmount: outcome.order.totalAmount,
-        status: outcome.order.status,
-        accessStatus: outcome.order.accessStatus,
-        userEmail: outcome.order.userEmail,
-        driveLinksCount: outcome.order.driveLinks?.length ?? 0,
-      },
-    },
-    { status: 200 },
-  );
+  return NextResponse.json(result.data, { status: result.status });
 }
