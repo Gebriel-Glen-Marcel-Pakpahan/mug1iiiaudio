@@ -1,5 +1,6 @@
 import type { Album, DbShape, Order, Payment, DriveLink, Refund, User } from "./types";
 import { ALBUM_SEEDS } from "./seed-data";
+import { hashPassword } from "./password";
 
 const DAY = 86_400_000;
 const ago = (days: number, hours = 0) =>
@@ -51,6 +52,7 @@ export function buildSeedDb(): DbShape {
       avatarUrl: null,
       role: "ADMIN",
       createdAt: ago(400),
+      passwordHash: hashPassword("admin123"),
     },
     {
       id: "usr_demo",

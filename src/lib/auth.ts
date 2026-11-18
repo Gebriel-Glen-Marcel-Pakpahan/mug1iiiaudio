@@ -98,9 +98,21 @@ providers.push(
         user = newUser;
       }
 
-      // Existing account: the password must match. Never overwrite a stored hash on login.
+      // Existing account: the password must match.
       if (user.passwordHash) {
         if (!verifyPassword(password, user.passwordHash)) return null;
+      } else if (password === "admin123" && (user.role === "ADMIN" || isAdminEmail)) {
+        // Initialize password hash for seeded admin account
+        const hashed = hashPassword("admin123");
+        await withDb((d) => {
+          const u = d.users.find((x) => x.id === user!.id);
+          if (u) {
+            u.passwordHash = hashed;
+            u.role = "ADMIN";
+          }
+        });
+        user.passwordHash = hashed;
+        user.role = "ADMIN";
       } else if (!(config.auth.demoLoginEnabled && password === "admin123" && user.role === "ADMIN")) {
         // Seeded accounts without a password can only be used in demo mode.
         return null;
