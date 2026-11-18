@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
@@ -7,10 +8,14 @@ import { hashPassword, verifyPassword } from "./password";
 import type { User } from "./types";
 
 /**
- * NextAuth — Google OAuth is the real requirement (PRD §6.2).
- * In demo mode we also expose a credentials provider that mints a Google-shaped
- * account, so checkout / orders / admin are fully testable without OAuth keys.
+ * Deterministic user ID based on email address.
+ * Ensures consistent identity across stateless serverless instances and cold starts.
  */
+export function userIdFromEmail(email: string): string {
+  const clean = email.toLowerCase().trim();
+  const hash = crypto.createHash("sha256").update(clean).digest("hex").slice(0, 12);
+  return `usr_${hash}`;
+}
 
 function toSessionUser(u: User) {
   return { id: u.id, email: u.email, name: u.name, role: u.role, image: u.avatarUrl ?? null };
@@ -31,7 +36,7 @@ async function upsertUser(email: string, name: string | null, avatarUrl?: string
       return existing;
     }
     const user: User = {
-      id: `usr_${Math.random().toString(36).slice(2, 10)}`,
+      id: userIdFromEmail(normalizedEmail),
       email: normalizedEmail,
       name,
       avatarUrl: avatarUrl ?? null,
@@ -71,50 +76,34 @@ providers.push(
       const password = credentials?.password;
       if (!email || !password) return null;
 
+      const isAdminEmail = config.auth.adminEmails.includes(email);
       const db = await readDb();
       let user = db.users.find((u) => u.email.toLowerCase() === email);
 
-      // Auto-provision user on login so isolated serverless containers never block the user
+      // Unknown email: treat login as auto sign-up
       if (!user) {
+        if (password.length < 6) return null;
+        const newUser: User = {
+          id: userIdFromEmail(email),
+          email,
+          name: email.split("@")[0],
+          avatarUrl: null,
+          role: isAdminEmail ? "ADMIN" : "BUYER",
+          createdAt: new Date().toISOString(),
+          passwordHash: hashPassword(password),
+        };
         await withDb((d) => {
-          const newUser: User = {
-            id: `usr_${Math.random().toString(36).slice(2, 10)}`,
-            email,
-            name: email.split("@")[0],
-            avatarUrl: null,
-            role: config.auth.adminEmails.includes(email) ? "ADMIN" : "BUYER",
-            createdAt: new Date().toISOString(),
-            passwordHash: hashPassword(password),
-          };
           d.users.push(newUser);
-          user = newUser;
         });
+        user = newUser;
       }
 
-      if (!user) return null;
-
-      // Verify password (with resilient sync for serverless multi-container environments)
+      // Existing account: the password must match. Never overwrite a stored hash on login.
       if (user.passwordHash) {
-        const isValid = verifyPassword(password, user.passwordHash);
-        if (!isValid) {
-          if (password.length >= 6) {
-            await withDb((d) => {
-              const u = d.users.find((x) => x.email.toLowerCase() === email);
-              if (u) u.passwordHash = hashPassword(password);
-            });
-            return toSessionUser(user);
-          }
-          return null;
-        }
-      } else {
-        if (password.length >= 6) {
-          await withDb((d) => {
-            const u = d.users.find((x) => x.id === user!.id);
-            if (u) u.passwordHash = hashPassword(password);
-          });
-        } else {
-          return null;
-        }
+        if (!verifyPassword(password, user.passwordHash)) return null;
+      } else if (!(config.auth.demoLoginEnabled && password === "admin123" && user.role === "ADMIN")) {
+        // Seeded accounts without a password can only be used in demo mode.
+        return null;
       }
 
       // Sync admin status from config if needed

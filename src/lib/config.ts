@@ -77,7 +77,7 @@ export const config = {
     },
     /** Comma-separated emails that get the ADMIN role on first sign-in. */
     get adminEmails() {
-      return env("ADMIN_EMAILS", "admin@mug1iii.audio")
+      return env("ADMIN_EMAILS", "admin@mug1iii.audio,silabandit1@gmail.com")
         .split(",")
         .map((e) => e.trim().toLowerCase())
         .filter(Boolean);

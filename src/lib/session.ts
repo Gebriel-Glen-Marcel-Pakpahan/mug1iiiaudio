@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "./auth";
+import { authOptions, userIdFromEmail } from "./auth";
 import { readDb, withDb } from "./db";
 import { config } from "./config";
 import type { User } from "./types";
@@ -16,7 +16,7 @@ export async function getSessionUser(): Promise<User | null> {
 
   if (!user) {
     const isAdmin = config.auth.adminEmails.includes(normalizedEmail);
-    const userId = (session.user as { id?: string }).id || `usr_${Math.random().toString(36).slice(2, 10)}`;
+    const userId = (session.user as { id?: string }).id || userIdFromEmail(normalizedEmail);
     const role = isAdmin ? "ADMIN" : (((session.user as { role?: string }).role as any) || "BUYER");
 
     user = await withDb(async (d) => {

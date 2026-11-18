@@ -38,15 +38,8 @@ export function AlbumCard({ album, index = 0 }: { album: Album; index?: number }
               aria-hidden="true"
             />
 
-            {/* Badges on sleeve */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between p-2.5">
-              {album.featured ? (
-                <span className="bg-gold px-2 py-0.5 font-mono text-[0.5rem] font-semibold uppercase tracking-[0.16em] text-carbon-950 shadow-md">
-                  Pilihan
-                </span>
-              ) : (
-                <span />
-              )}
+            {/* Format badge on sleeve (subtle, non-obtrusive) */}
+            <div className="pointer-events-none absolute right-2 top-2 z-30">
               <span className="glass-pill px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-ink-soft">
                 {album.format}
               </span>
@@ -60,9 +53,16 @@ export function AlbumCard({ album, index = 0 }: { album: Album; index?: number }
             <h3 className="line-clamp-2 min-h-[2.6rem] font-display text-[1.0625rem] font-semibold leading-snug text-ink transition-colors duration-300 group-hover:text-gold-bright">
               {album.title}
             </h3>
-            <p className="mt-1 truncate font-mono text-2xs uppercase tracking-label text-ink-mute">
-              {album.artist}
-            </p>
+            <div className="mt-1 flex items-center gap-1.5">
+              {album.featured && (
+                <span className="shrink-0 bg-gold px-1.5 py-0.5 font-mono text-[0.45rem] font-bold uppercase tracking-wider text-carbon-950">
+                  Pilihan
+                </span>
+              )}
+              <p className="truncate font-mono text-2xs uppercase tracking-label text-ink-mute">
+                {album.artist}
+              </p>
+            </div>
           </div>
           <div className="shrink-0 text-right">
             <p className="num font-display text-sm font-semibold text-gold-bright">

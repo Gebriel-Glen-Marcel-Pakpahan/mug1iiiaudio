@@ -44,8 +44,8 @@ export function HeroVisual({ album }: { album: Album }) {
           />
         </div>
 
-        {/* floating smoked glass spec plate */}
-        <div className="glass-panel absolute -bottom-6 right-0 w-[66%] p-4 transition-all duration-500 ease-spring group-hover:-translate-y-1">
+        {/* smoked glass spec plate - positioned cleanly below sleeve without overlapping artwork text */}
+        <div className="glass-panel mt-4 w-[86%] p-3.5 transition-all duration-500 ease-spring group-hover:-translate-y-0.5">
           <div className="flex items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 font-mono text-[0.5rem] uppercase tracking-[0.2em] text-ink-faint">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />

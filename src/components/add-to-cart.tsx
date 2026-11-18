@@ -21,7 +21,7 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
     setMessage(null);
     try {
       // Sync to cart and navigate directly to checkout with albumId for instant, zero-delay flow
-      void fetch("/api/cart", {
+      await fetch("/api/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ albumId }),
@@ -88,7 +88,7 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
           )}
         >
           {state === "added" ? <Check size={14} /> : <Plus size={14} />}
-          {state === "added" ? "Ditambahkan" : "+ Keranjang"}
+          {state === "added" ? "Ditambahkan" : "Keranjang"}
         </button>
 
         <button

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readDb, withDb } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import { config } from "@/lib/config";
+import { userIdFromEmail } from "@/lib/auth";
 import type { User } from "@/lib/types";
 
 export async function POST(req: Request) {
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
 
     const isAdmin = config.auth.adminEmails.includes(email);
     const newUser: User = {
-      id: `usr_${Math.random().toString(36).slice(2, 10)}`,
+      id: userIdFromEmail(email),
       email,
       name: name || email.split("@")[0],
       avatarUrl: null,

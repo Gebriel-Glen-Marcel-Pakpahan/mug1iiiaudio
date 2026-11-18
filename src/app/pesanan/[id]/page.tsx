@@ -63,10 +63,21 @@ export default async function OrderDetailPage({ params }: { params: { id: string
             {order.paidAt && ` · Lunas ${formatDateTime(order.paidAt)}`}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={order.status} />
-          <StatusBadge status={order.accessStatus} />
-          {order.refund && <StatusBadge status={order.refund.status} />}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 font-mono text-[0.625rem] text-ink-mute">
+            <span>Pesanan:</span>
+            <StatusBadge status={order.status} />
+          </div>
+          <div className="flex items-center gap-1.5 font-mono text-[0.625rem] text-ink-mute">
+            <span>Akses Drive:</span>
+            <StatusBadge status={order.accessStatus} />
+          </div>
+          {order.refund && (
+            <div className="flex items-center gap-1.5 font-mono text-[0.625rem] text-ink-mute">
+              <span>Garansi:</span>
+              <StatusBadge status={order.refund.status} />
+            </div>
+          )}
         </div>
       </div>
 

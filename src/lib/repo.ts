@@ -73,7 +73,17 @@ export async function getCartView(userId: string) {
     // ignore outside request
   }
 
-  const dbItems = db.cart.filter((c) => c.userId === userId);
+  const user = db.users.find((u) => u.id === userId || u.email.toLowerCase() === userId.toLowerCase());
+  const userIds = new Set<string>([userId]);
+  if (user) {
+    userIds.add(user.id);
+    userIds.add(user.email.toLowerCase());
+    db.users
+      .filter((u) => u.email.toLowerCase() === user.email.toLowerCase())
+      .forEach((u) => userIds.add(u.id));
+  }
+
+  const dbItems = db.cart.filter((c) => userIds.has(c.userId));
   const allAlbumIds = Array.from(new Set([...dbItems.map((c) => c.albumId), ...cookieAlbumIds]));
 
   const items = allAlbumIds

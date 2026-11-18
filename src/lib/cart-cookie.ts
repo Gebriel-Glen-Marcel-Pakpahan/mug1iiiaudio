@@ -11,7 +11,16 @@ export function getCartAlbumIdsFromCookies(): string[] {
     const cookieStore = cookies();
     const raw = cookieStore.get(CART_COOKIE_NAME)?.value;
     if (!raw) return [];
-    const parsed = JSON.parse(decodeURIComponent(raw));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      try {
+        parsed = JSON.parse(decodeURIComponent(raw));
+      } catch {
+        return [];
+      }
+    }
     if (Array.isArray(parsed)) {
       return parsed.filter((id): id is string => typeof id === "string" && Boolean(id));
     }

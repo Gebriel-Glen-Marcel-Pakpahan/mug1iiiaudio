@@ -145,7 +145,7 @@ export function CheckoutView({
       </div>
 
       {/* summary */}
-      <aside className="lg:sticky lg:top-24 lg:self-start">
+      <aside className="lg:sticky lg:top-28 lg:self-start">
         <div className="plate p-6">
           <h2 className="font-mono text-2xs uppercase tracking-label text-ink-faint">
             Total pembayaran

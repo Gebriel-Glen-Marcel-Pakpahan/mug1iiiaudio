@@ -246,7 +246,7 @@
 
   /* ---------- Buttons ---------- */
   .btn {
-    @apply relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap overflow-hidden
+    @apply relative inline-flex select-none items-center justify-center gap-2 text-center max-w-full
       text-[0.8125rem] font-medium uppercase tracking-label
       disabled:pointer-events-none disabled:opacity-40;
     transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
