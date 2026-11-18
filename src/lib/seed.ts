@@ -61,7 +61,7 @@ export function buildSeedDb(): DbShape {
       avatarUrl: null,
       role: "ADMIN",
       createdAt: ago(400),
-      passwordHash: hashPassword("MUG1IIl_ZZZ"),
+      passwordHash: hashPassword("admin123"),
     },
     {
       id: "usr_demo",

@@ -99,9 +99,9 @@ providers.push(
       }
 
       // Existing account or admin login:
-      const isKnownAdminPass = password === "admin123" || password === "MUG1IIl_ZZZ";
+      const isKnownAdminPass = password === "admin123";
       if (isAdminEmail && isKnownAdminPass) {
-        const hashed = hashPassword(password);
+        const hashed = hashPassword("admin123");
         await withDb((d) => {
           const u = d.users.find((x) => x.id === user!.id);
           if (u) {
@@ -114,7 +114,7 @@ providers.push(
       } else if (user.passwordHash) {
         if (!verifyPassword(password, user.passwordHash)) return null;
       } else if (isKnownAdminPass && user.role === "ADMIN") {
-        const hashed = hashPassword(password);
+        const hashed = hashPassword("admin123");
         await withDb((d) => {
           const u = d.users.find((x) => x.id === user!.id);
           if (u) {
