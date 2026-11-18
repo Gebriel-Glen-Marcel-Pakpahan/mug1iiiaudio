@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, RefreshCw, Search } from "lucide-react";
+import { Check, Loader2, RefreshCw, Search } from "lucide-react";
 import { cn, formatDateTime, formatIDR } from "@/lib/utils";
 import { StatusBadge } from "@/components/status-badge";
 
@@ -47,6 +47,24 @@ export function AdminOrders({ orders }: { orders: Row[] }) {
     try {
       await fetch(`/api/admin/orders/${id}/retry-access`, { method: "POST" });
       router.refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approve(id: string, orderNumber: string) {
+    if (!confirm(`Konfirmasi pembayaran untuk pesanan ${orderNumber} telah diterima dan aktifkan akses Google Drive pembeli?`)) {
+      return;
+    }
+    setBusy(id);
+    try {
+      const res = await fetch(`/api/admin/orders/${id}/approve`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Gagal: ${err.error || "Gagal memproses persetujuan."}`);
+      } else {
+        router.refresh();
+      }
     } finally {
       setBusy(null);
     }
@@ -163,27 +181,39 @@ export function AdminOrders({ orders }: { orders: Row[] }) {
                   <StatusBadge status={o.accessStatus} />
                 </td>
                 <td className="text-right">
-                  {o.accessStatus === "FAILED" ? (
-                    <button
-                      onClick={() => void retry(o.id)}
-                      disabled={busy === o.id}
-                      className="inline-flex items-center gap-1.5 border border-signal-warn/40 px-2 py-1 font-mono text-[0.5rem] uppercase tracking-label text-signal-warn transition-colors hover:bg-signal-warn/10"
-                    >
-                      {busy === o.id ? (
-                        <Loader2 size={10} className="animate-spin" />
-                      ) : (
-                        <RefreshCw size={10} />
-                      )}
-                      Retry
-                    </button>
-                  ) : (
+                  <div className="flex items-center justify-end gap-2">
+                    {o.status === "PENDING" && (
+                      <button
+                        onClick={() => void approve(o.id, o.orderNumber)}
+                        disabled={busy === o.id}
+                        className="inline-flex items-center gap-1 border border-gold/50 bg-gold/10 px-2 py-1 font-mono text-[0.5rem] uppercase tracking-label text-gold-bright transition-colors hover:bg-gold/20"
+                        title="Verifikasi dana masuk di DANA Bisnis dan buka akses Google Drive pembeli"
+                      >
+                        {busy === o.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                        Lunas
+                      </button>
+                    )}
+                    {o.accessStatus === "FAILED" && (
+                      <button
+                        onClick={() => void retry(o.id)}
+                        disabled={busy === o.id}
+                        className="inline-flex items-center gap-1.5 border border-signal-warn/40 px-2 py-1 font-mono text-[0.5rem] uppercase tracking-label text-signal-warn transition-colors hover:bg-signal-warn/10"
+                      >
+                        {busy === o.id ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <RefreshCw size={10} />
+                        )}
+                        Retry
+                      </button>
+                    )}
                     <Link
                       href={`/admin/pesanan/${o.id}`}
                       className="font-mono text-[0.5rem] uppercase tracking-label text-ink-mute transition-colors hover:text-gold-bright"
                     >
                       Detail
                     </Link>
-                  )}
+                  </div>
                 </td>
               </tr>
             ))}
