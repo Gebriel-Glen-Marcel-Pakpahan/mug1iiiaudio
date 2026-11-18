@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { confirmOrderPayment, getOrderForUser, grantAccess, syncOrderPayment } from "@/lib/repo";
+import { getOrderForUser, grantAccess, syncOrderPayment } from "@/lib/repo";
 import { jsonError, requireUser } from "@/lib/session";
 import { attachOrderCookies } from "@/lib/order-cookie";
 
@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/orders/:id/confirm
- * Strictly verifies whether the order has actually been paid (via Midtrans API, transfer reference, or Admin approval).
- * NEVER auto-approves without verification. Unlocks Google Drive links immediately upon payment confirmation.
+ * Strictly verifies whether the order has genuinely been paid (via Midtrans API, IMAP payment receipt, or Admin approval).
+ * NEVER auto-approves an unpaid order. If unpaid, returns status: "PENDING" and paid: false.
  */
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(_req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
     let order = await getOrderForUser(params.id, user.id);
@@ -18,28 +18,15 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
     }
 
-    const body = (await req.json().catch(() => ({}))) as {
-      manualConfirm?: boolean;
-      transferReference?: string;
-    };
-
-    // 1. Actively check payment status against Midtrans
+    // 1. Actively check real payment status against Midtrans API & Store IMAP Mutasi
     if (order.status === "PENDING") {
       const synced = await syncOrderPayment(params.id);
-      if (synced && synced.status === "PAID") {
+      if (synced) {
         order = synced;
       }
     }
 
-    // 2. Direct transfer confirmation (buyer confirms transfer to MUG1III STORE QRIS or admin approves)
-    if (order.status === "PENDING" && (body.manualConfirm || user.role === "ADMIN")) {
-      const confirmed = await confirmOrderPayment(params.id, user.email);
-      if (confirmed) {
-        order = confirmed;
-      }
-    }
-
-    // 3. If order is genuinely PAID, ensure Google Drive access links are granted and ready
+    // 2. If order is genuinely PAID, ensure Google Drive access links are granted and emailed to order.userEmail
     if (order.status === "PAID") {
       if (order.accessStatus !== "GRANTED" || !order.driveLinks?.length) {
         await grantAccess(order.id);
@@ -56,7 +43,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           paidAt: order.paidAt,
           driveLinks: order.driveLinks ?? [],
           checkedAt: new Date().toISOString(),
-          message: "Pembayaran telah terverifikasi lunas. Akses Google Drive aktif.",
+          message: `Pembayaran telah terverifikasi lunas. Akses Google Drive telah dikirim ke ${order.userEmail}.`,
         },
         { headers: { "Cache-Control": "no-store" } },
       );
@@ -64,7 +51,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return res;
     }
 
-    // 4. Order is NOT paid yet (still PENDING / CANCELLED) — strictly block Drive access
+    // 3. Order is NOT paid yet (still PENDING / CANCELLED) — strictly block Drive access
     const res = NextResponse.json(
       {
         paid: false,
@@ -75,7 +62,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         driveLinks: [],
         checkedAt: new Date().toISOString(),
         message:
-          "Pembayaran belum terdeteksi otomatis. Jika Anda sudah transfer ke QRIS MUG1III STORE, silakan klik tombol 'Saya Sudah Transfer' untuk verifikasi langsung.",
+          "Pembayaran belum diterima di sistem. Silakan pindai kode QRIS dan selesaikan transfer terlebih dahulu.",
       },
       { headers: { "Cache-Control": "no-store" } },
     );

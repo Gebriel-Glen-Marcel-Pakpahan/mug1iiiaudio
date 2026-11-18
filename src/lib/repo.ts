@@ -1,7 +1,7 @@
 import { withDb, readDb, id, nowIso, makeOrderNumber, audit } from "./db";
 import { createQrisCharge, verifySignature, fetchMidtransStatus } from "./services/midtrans";
 import { grantFolderAccess, revokeFolderAccess } from "./services/gdrive";
-import { sendAccessEmail, sendRefundEmail } from "./services/email";
+import { checkImapPaymentNotification, sendAccessEmail, sendRefundEmail } from "./services/email";
 import { config } from "./config";
 import { getCartAlbumIdsFromCookies } from "./cart-cookie";
 import type { Album, AlbumRequest, AlbumRequestStatus, DbShape, Order, OrderView, Refund, User } from "./types";
@@ -29,7 +29,7 @@ export function toOrderView(db: DbShape, order: Order): OrderView {
   return {
     ...order,
     albumTitles: albums.map((a) => a.title),
-    userEmail: user?.email ?? "—",
+    userEmail: order.userEmail || user?.email || "—",
     payment: db.payments.find((p) => p.orderId === order.id) ?? null,
     driveLinks: isPaid ? db.driveLinks.filter((d) => d.orderId === order.id) : [],
     refund: db.refunds.find((r) => r.orderId === order.id) ?? null,
@@ -38,15 +38,26 @@ export function toOrderView(db: DbShape, order: Order): OrderView {
 
 export async function listOrdersForUser(userId: string): Promise<OrderView[]> {
   const db = await readDb();
+  const user = db.users.find((u) => u.id === userId);
   return db.orders
-    .filter((o) => o.userId === userId)
+    .filter(
+      (o) =>
+        o.userId === userId ||
+        (user?.email && o.userEmail?.toLowerCase() === user.email.toLowerCase()),
+    )
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .map((o) => toOrderView(db, o));
 }
 
 export async function getOrderForUser(orderId: string, userId: string): Promise<OrderView | null> {
   const db = await readDb();
-  const order = db.orders.find((o) => o.id === orderId && o.userId === userId);
+  const user = db.users.find((u) => u.id === userId);
+  const order = db.orders.find(
+    (o) =>
+      o.id === orderId &&
+      (o.userId === userId ||
+        (user?.email && o.userEmail?.toLowerCase() === user.email.toLowerCase())),
+  );
   return order ? toOrderView(db, order) : null;
 }
 
@@ -174,6 +185,7 @@ export async function checkout(user: User, directAlbumId?: string) {
       id: orderId,
       orderNumber,
       userId: user.id,
+      userEmail: user.email,
       totalAmount: total,
       taxAmount: 0,
       status: "PENDING",
@@ -313,26 +325,44 @@ export async function syncOrderPayment(orderId: string): Promise<OrderView | nul
     return getOrderById(orderId);
   }
 
-  if (order.status !== "PENDING" || !config.midtrans.isConfigured) {
+  if (order.status !== "PENDING") {
     return toOrderView(db, order);
   }
 
-  const live = await fetchMidtransStatus(order.orderNumber);
-  if (live) {
-    await handleWebhook({
-      order_id: order.orderNumber,
-      transaction_status: live.transactionStatus,
-      status_code: live.statusCode,
-      gross_amount: live.grossAmount,
-      signature_key: live.signatureKey,
-    });
+  // 1. Check Midtrans Gateway API if configured
+  if (config.midtrans.isConfigured) {
+    const live = await fetchMidtransStatus(order.orderNumber);
+    if (live) {
+      await handleWebhook({
+        order_id: order.orderNumber,
+        transaction_status: live.transactionStatus,
+        status_code: live.statusCode,
+        gross_amount: live.grossAmount,
+        signature_key: live.signatureKey,
+      });
+      const updated = await getOrderById(orderId);
+      if (updated?.status === "PAID") return updated;
+    }
   }
+
+  // 2. Check Store Gmail Inbox via IMAP for genuine QRIS / DANA / Bank payment receipt notification
+  if (config.email.isConfigured) {
+    const imapPaid = await checkImapPaymentNotification({
+      orderNumber: order.orderNumber,
+      amount: order.totalAmount,
+      createdAt: order.createdAt,
+    });
+    if (imapPaid) {
+      return confirmOrderPayment(orderId, "mutasi-imap@mug1iii.audio");
+    }
+  }
+
   return getOrderById(orderId);
 }
 
 /**
- * Direct confirmation of order payment (used when testing real payment or scanning official MUG1III STORE QRIS).
- * Immediately marks order PAID and triggers Google Drive access grant.
+ * Direct confirmation of order payment (used by Admin approval or verified IMAP mutasi).
+ * Immediately marks order PAID and triggers Google Drive access grant + email to buyer.
  */
 export async function confirmOrderPayment(orderId: string, actorEmail: string): Promise<OrderView | null> {
   const outcome = await withDb((db) => {
@@ -379,17 +409,19 @@ export async function grantAccess(orderId: string): Promise<void> {
     if (!order) return null;
     if (order.status !== "PAID" && order.status !== "REFUNDED") return null;
     if (order.accessStatus === "GRANTED") return null;
-    order.accessStatus = "GRANTING";
     const user = db.users.find((u) => u.id === order.userId);
+    const recipientEmail = order.userEmail || user?.email;
+    if (!recipientEmail || !recipientEmail.includes("@")) return null;
+    order.accessStatus = "GRANTING";
     const items = order.items.map((i) => ({
       itemId: i.id,
       album: db.albums.find((a) => a.id === i.albumId)!,
     }));
-    return { order, user, items };
+    return { order, recipientEmail, items };
   });
 
-  if (!snapshot || !snapshot.user) return;
-  const { order, user, items } = snapshot;
+  if (!snapshot) return;
+  const { order, recipientEmail, items } = snapshot;
 
   const granted: { title: string; linkUrl: string }[] = [];
   let failed = false;
@@ -398,7 +430,7 @@ export async function grantAccess(orderId: string): Promise<void> {
     try {
       const result = await grantFolderAccess({
         folderId: album.gdriveFolderId,
-        email: user.email,
+        email: recipientEmail,
         orderNumber: order.orderNumber,
         albumTitle: album.title,
       });

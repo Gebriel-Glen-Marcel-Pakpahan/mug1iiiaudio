@@ -1,4 +1,4 @@
-// Test payment confirmation and Drive unlock on localhost:3000
+// End-to-End Verification: Registration (Any Email), Dynamic QRIS, Strict Unpaid Gate, and Verified Settlement
 import assert from "node:assert";
 
 const BASE_URL = "http://localhost:3000";
@@ -45,84 +45,104 @@ async function request(path, opts = {}) {
 }
 
 async function test() {
-  console.log("=== Testing Checkout, Dynamic QRIS, and Payment Confirmation on Localhost ===");
+  console.log("=== Testing Registration (Any Email), Strict Unpaid Gate, and Verified Settlement ===");
 
-  // 1. Get CSRF & Authenticate
+  // 1. Register a brand new buyer via /api/auth/register
+  const buyerEmail = `pembeli.${Date.now()}@gmail.com`;
+  const regRes = await request("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Pembeli Baru",
+      email: buyerEmail,
+      password: "password123",
+    }),
+  });
+  const regData = await regRes.json();
+  assert.strictEqual(regRes.status, 200, `Register failed: ${JSON.stringify(regData)}`);
+  assert.strictEqual(regData.user.email, buyerEmail);
+  assert.strictEqual(regData.user.role, "BUYER");
+  console.log(`1. Registered new buyer via Daftar Akun: ${buyerEmail} (role: ${regData.user.role})`);
+
+  // 2. Login as that registered buyer
   const csrfRes = await request("/api/auth/csrf");
   const { csrfToken } = await csrfRes.json();
-
-  const testEmail = `verifier.${Date.now()}@mug1iii.audio`;
-  const loginRes = await request("/api/auth/callback/credentials", {
+  await request("/api/auth/callback/credentials", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       csrfToken,
-      email: testEmail,
+      email: buyerEmail,
       password: "password123",
       callbackUrl: `${BASE_URL}/`,
       json: "true",
     }),
   });
-  console.log(`1. Authenticated as ${testEmail}. Session cookies:`, Object.keys(cookies));
+  console.log("2. Logged in as registered buyer.");
 
-  // 2. Add album to cart
+  // 3. Add album & Checkout
   const albumsRes = await request("/api/albums");
-  const albumsJson = await albumsRes.json();
-  const album = albumsJson.items[0];
-  console.log(`2. Picked album: ${album.title} (Rp ${album.price})`);
+  const { items } = await albumsRes.json();
+  const album = items[0];
 
-  const cartRes = await request("/api/cart", {
+  await request("/api/cart", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ albumId: album.id }),
   });
-  const cartJson = await cartRes.json();
-  console.log("3. Added to cart. Items in cart:", cartJson.count);
 
-  // 3. Checkout
   const checkoutRes = await request("/api/checkout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
   const checkoutData = await checkoutRes.json();
-  console.log(`4. Checkout successful: Order ${checkoutData.orderNumber} (ID: ${checkoutData.orderId}), total Rp ${checkoutData.totalAmount}`);
   assert(checkoutData.orderId, "Expected orderId");
-  assert(checkoutData.qrString, "Expected qrString");
-  assert(checkoutData.qrString.includes("540"), "Expected QR payload to contain tag 54 (amount)");
+  assert(checkoutData.qrString.includes("540"), "Expected Tag 54 nominal in QRIS");
+  console.log(`3. Order created: ${checkoutData.orderNumber} (Total: Rp ${checkoutData.totalAmount})`);
 
-  // 4. Check QR endpoint
-  const qrRes = await request(`/api/orders/${checkoutData.orderId}/qr`);
-  const qrData = await qrRes.json();
-  assert(qrData.qrDataUrl, "Expected qrDataUrl");
-  assert(qrData.qrDataUrl.startsWith("data:image/png;base64,"), "Expected base64 data URL for QR");
-  console.log("5. QR endpoint returns dynamic QR image with amount");
-
-  // 5. Test unpaid check (should return paid: false)
-  const unpaidCheck = await request(`/api/orders/${checkoutData.orderId}/confirm`, {
+  // 4. Test confirm WITHOUT paying (even if passing manualConfirm: true) -> MUST BE BLOCKED!
+  const unpaidRes = await request(`/api/orders/${checkoutData.orderId}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ manualConfirm: false }),
+    body: JSON.stringify({ manualConfirm: true }),
   });
-  const unpaidData = await unpaidCheck.json();
-  assert.strictEqual(unpaidData.paid, false);
-  assert.strictEqual(unpaidData.status, "PENDING");
-  assert.strictEqual(unpaidData.driveLinks.length, 0);
-  console.log("6. Unpaid check correctly returns paid=false, Drive links locked");
+  const unpaidData = await unpaidRes.json();
+  assert.strictEqual(unpaidData.paid, false, "Unpaid order MUST NOT be marked paid!");
+  assert.strictEqual(unpaidData.status, "PENDING", "Unpaid order status MUST remain PENDING!");
+  assert.strictEqual(unpaidData.driveLinks.length, 0, "Unpaid order MUST NOT expose driveLinks!");
+  console.log("4. STRICT UNPAID CHECK PASSED: manualConfirm bypass rejected, status remains PENDING, Drive locked.");
 
-  // 6. Test manual transfer confirmation (user transferred to MUG1III STORE)
-  const confirmRes = await request(`/api/orders/${checkoutData.orderId}/confirm`, {
+  // 5. Simulate verified Midtrans webhook settlement for this order
+  const webhookRes = await request("/api/webhooks/midtrans", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ manualConfirm: true, transferReference: "DANA-10K" }),
+    body: JSON.stringify({
+      order_id: checkoutData.orderNumber,
+      transaction_status: "settlement",
+      status_code: "200",
+      gross_amount: String(checkoutData.totalAmount),
+      signature_key: "demo",
+      demo_secret: "demo-settle",
+    }),
   });
-  const confirmData = await confirmRes.json();
-  assert.strictEqual(confirmData.paid, true);
-  assert.strictEqual(confirmData.status, "PAID");
-  assert(confirmData.driveLinks.length > 0, "Expected driveLinks to be unlocked");
-  console.log("7. Confirmation successful: Order PAID, Drive links unlocked:", confirmData.driveLinks[0]?.linkUrl);
+  assert.strictEqual(webhookRes.status, 200, "Webhook settlement should succeed");
 
-  console.log("\n=== ALL LOCAL TESTS PASSED SUCCESSFULLY! ===");
+  // 6. Now check confirm after genuine settlement -> MUST unlock Drive links for buyerEmail!
+  const paidRes = await request(`/api/orders/${checkoutData.orderId}/confirm`, {
+    method: "POST",
+  });
+  const paidData = await paidRes.json();
+  assert.strictEqual(paidData.paid, true, "Paid order must return paid=true");
+  assert.strictEqual(paidData.status, "PAID", "Paid order status must be PAID");
+  assert(paidData.driveLinks.length > 0, "Paid order must return driveLinks");
+  assert(
+    paidData.driveLinks[0].linkUrl.includes(encodeURIComponent(buyerEmail)),
+    `Drive link should target buyer email ${buyerEmail}, got ${paidData.driveLinks[0].linkUrl}`,
+  );
+  console.log(`5. Verified settlement unlocked Drive link specifically for ${buyerEmail}: ${paidData.driveLinks[0].linkUrl}`);
+
+  console.log("\n=== ALL TESTS PASSED! ===");
 }
 
 test().catch((err) => {

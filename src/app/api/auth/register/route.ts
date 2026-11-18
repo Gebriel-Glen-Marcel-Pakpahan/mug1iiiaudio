@@ -3,6 +3,7 @@ import { readDb, withDb } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import { config } from "@/lib/config";
 import { userIdFromEmail } from "@/lib/auth";
+import { attachRegisteredUserCookie } from "@/lib/order-cookie";
 import type { User } from "@/lib/types";
 
 export async function POST(req: Request) {
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
       return newUser;
     });
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       ok: true,
       message: "Akun berhasil didaftarkan.",
       user: {
@@ -61,6 +62,8 @@ export async function POST(req: Request) {
         role: newUser.role,
       },
     });
+    attachRegisteredUserCookie(res, newUser);
+    return res;
   } catch (err) {
     console.error("Register error:", err);
     const detail = (err as Error)?.message || String(err);

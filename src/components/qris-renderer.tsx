@@ -108,13 +108,11 @@ export function QrisRenderer({ order }: { order: OrderView }) {
    * - If PAID: unlocks Google Drive link screen.
    * - If NOT PAID (PENDING): displays the "BELUM BAYAR" screen & keeps Drive link locked.
    */
-  const handleVerifyPayment = async (manual = false) => {
+  const handleVerifyPayment = async () => {
     setVerifying(true);
     try {
       const res = await fetch(`/api/orders/${order.id}/confirm`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manualConfirm: manual }),
         cache: "no-store",
       });
       const data = (await res.json().catch(() => ({}))) as Live & { error?: string; message?: string };
@@ -470,33 +468,22 @@ export function QrisRenderer({ order }: { order: OrderView }) {
           {/* Tombol Aksi */}
           <div className="mt-7 space-y-3">
             <button
-              onClick={() => handleVerifyPayment(true)}
-              disabled={verifying}
+              onClick={() => setShowUnpaidScreen(false)}
               className="btn-gold w-full justify-center py-3.5 text-xs font-semibold"
             >
-              <CheckCircle2 size={15} />
-              {verifying
-                ? "Memverifikasi Pembayaran…"
-                : "Saya Sudah Transfer ke MUG1III STORE — Verifikasi & Buka Akses Sekarang"}
-            </button>
-
-            <button
-              onClick={() => setShowUnpaidScreen(false)}
-              className="btn-outline w-full justify-center py-3 text-xs"
-            >
               <ArrowLeft size={14} />
-              Kembali ke Kode QRIS &amp; Lakukan Pembayaran
+              Kembali ke Kode QRIS &amp; Lakukan Pembayaran Sekarang
             </button>
 
             <button
-              onClick={() => handleVerifyPayment(false)}
+              onClick={handleVerifyPayment}
               disabled={verifying}
-              className="btn-outline w-full justify-center py-3 text-xs opacity-75"
+              className="btn-outline w-full justify-center py-3 text-xs"
             >
               <RefreshCw size={14} className={cn(verifying && "animate-spin text-gold")} />
               {verifying
                 ? "Memeriksa Ulang Mutasi Pembayaran…"
-                : "Cek Ulang Status Otomatis"}
+                : "Sudah Transfer? Cek Ulang Status Pembayaran"}
             </button>
 
             <div className="border-t border-white/[0.08] pt-4 text-center">
@@ -691,30 +678,21 @@ export function QrisRenderer({ order }: { order: OrderView }) {
               {/* Tombol Pengecekan Status Pembayaran */}
               <div className="space-y-2.5 pt-2">
                 <button
-                  onClick={() => handleVerifyPayment(true)}
+                  onClick={handleVerifyPayment}
                   disabled={verifying}
                   className="btn-gold w-full justify-center py-3.5 text-xs font-semibold"
                 >
                   {verifying ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      Memverifikasi Pembayaran…
+                      Memeriksa Status Pembayaran…
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 size={15} />
-                      Saya Sudah Transfer ke MUG1III STORE (Buka Akses Drive)
+                      <RefreshCw size={14} />
+                      Cek Status Pembayaran &amp; Ambil Link Drive
                     </>
                   )}
-                </button>
-
-                <button
-                  onClick={() => handleVerifyPayment(false)}
-                  disabled={verifying}
-                  className="btn-outline w-full justify-center py-2.5 text-xs"
-                >
-                  <RefreshCw size={13} className={cn(verifying && "animate-spin text-gold")} />
-                  Cek Status Pembayaran Otomatis
                 </button>
               </div>
             </div>

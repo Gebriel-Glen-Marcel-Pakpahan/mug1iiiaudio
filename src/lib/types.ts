@@ -100,6 +100,7 @@ export interface Order {
   id: string;
   orderNumber: string;
   userId: string;
+  userEmail?: string;
   totalAmount: number;
   taxAmount: number;
   status: OrderStatus;

@@ -1,3 +1,4 @@
+import tls from "node:tls";
 import nodemailer from "nodemailer";
 import { config, isDemo } from "../config";
 import type { OrderView } from "../types";
@@ -26,6 +27,26 @@ export function pushOutbox(email: SentEmail) {
 const rupiah = (n: number) => new Intl.NumberFormat("id-ID").format(n);
 
 let transporter: nodemailer.Transporter | null = null;
+
+function parseSmtpCredentials(): { user: string; pass: string } | null {
+  try {
+    if (!config.email.smtpUrl) return null;
+    const u = new URL(config.email.smtpUrl);
+    const user = decodeURIComponent(u.username);
+    const pass = decodeURIComponent(u.password);
+    if (!user || !pass) return null;
+    return { user, pass };
+  } catch {
+    return null;
+  }
+}
+
+function resolveFromAddress(): string {
+  const creds = parseSmtpCredentials();
+  if (config.email.from.includes("@")) return config.email.from;
+  if (creds?.user) return `${config.email.from} <${creds.user}>`;
+  return config.email.from;
+}
 
 function getTransporter() {
   if (!transporter && config.email.smtpUrl) {
@@ -101,12 +122,12 @@ export function buildAccessEmail(order: OrderView, albums: { title: string; link
 export async function sendAccessEmail(order: OrderView, albums: { title: string; linkUrl: string }[]) {
   const { subject, preview, html } = buildAccessEmail(order, albums);
 
-  if (config.email.isConfigured) {
+  if (config.email.isConfigured && order.userEmail && order.userEmail.includes("@")) {
     try {
       const mailer = getTransporter();
       if (mailer) {
         await mailer.sendMail({
-          from: config.email.from,
+          from: resolveFromAddress(),
           to: order.userEmail,
           subject,
           text: preview,
@@ -135,6 +156,126 @@ export async function sendAccessEmail(order: OrderView, albums: { title: string;
     simulated: true,
   });
   return { delivered: true, simulated: true };
+}
+
+/**
+ * Checks the store's Gmail inbox via IMAP (imap.gmail.com:993) for a genuine incoming
+ * QRIS / DANA / Bank / Midtrans payment notification arriving after the order was created.
+ */
+export async function checkImapPaymentNotification(params: {
+  orderNumber: string;
+  amount: number;
+  createdAt: string;
+}): Promise<boolean> {
+  const creds = parseSmtpCredentials();
+  if (!creds) return false;
+
+  const amountPlain = String(params.amount);
+  const amountFormatted = rupiah(params.amount); // e.g. "10.000"
+  const orderCreatedMs = new Date(params.createdAt).getTime() - 60_000;
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (val: boolean) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+      resolve(val);
+    };
+
+    const timer = setTimeout(() => finish(false), 3800);
+    const sock = tls.connect({ host: "imap.gmail.com", port: 993, servername: "imap.gmail.com" });
+
+    let step = 0;
+    let buf = "";
+
+    sock.on("error", () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+
+    sock.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      if (step === 0 && buf.includes("OK")) {
+        step = 1;
+        buf = "";
+        sock.write(`A1 LOGIN "${creds.user}" "${creds.pass}"\r\n`);
+      } else if (step === 1 && (buf.includes("A1 OK") || buf.includes("A1 NO") || buf.includes("A1 BAD"))) {
+        if (!buf.includes("A1 OK")) {
+          clearTimeout(timer);
+          return finish(false);
+        }
+        step = 2;
+        buf = "";
+        sock.write("A2 SELECT INBOX\r\n");
+      } else if (step === 2 && buf.includes("A2 OK")) {
+        const existsMatch = buf.match(/\*\s+(\d+)\s+EXISTS/i);
+        const totalMsgs = existsMatch ? Number(existsMatch[1]) : 0;
+        if (totalMsgs === 0) {
+          clearTimeout(timer);
+          return finish(false);
+        }
+        const startSeq = Math.max(1, totalMsgs - 14);
+        step = 3;
+        buf = "";
+        sock.write(`A3 FETCH ${startSeq}:${totalMsgs} (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.1500>)\r\n`);
+      } else if (step === 3 && (buf.includes("A3 OK") || buf.includes("A3 NO") || buf.includes("A3 BAD"))) {
+        clearTimeout(timer);
+        const raw = buf;
+        const blocks = raw.split(/\*\s+\d+\s+FETCH/i).slice(1);
+        for (const blk of blocks) {
+          const dateMatch = blk.match(/INTERNALDATE\s+"([^"]+)"/i);
+          if (dateMatch) {
+            const msgMs = new Date(dateMatch[1]).getTime();
+            if (!Number.isNaN(msgMs) && msgMs < orderCreatedMs) continue;
+          }
+          const lower = blk.toLowerCase();
+          // Must come from a recognized payment/bank/QRIS notification keywords
+          const isPaymentNotice =
+            lower.includes("dana") ||
+            lower.includes("qris") ||
+            lower.includes("midtrans") ||
+            lower.includes("gopay") ||
+            lower.includes("bca") ||
+            lower.includes("mandiri") ||
+            lower.includes("livin") ||
+            lower.includes("bri") ||
+            lower.includes("brimo") ||
+            lower.includes("bni") ||
+            lower.includes("seabank") ||
+            lower.includes("jago") ||
+            lower.includes("shopeepay") ||
+            lower.includes("ovo");
+
+          const hasSuccessWord =
+            lower.includes("berhasil") ||
+            lower.includes("diterima") ||
+            lower.includes("masuk") ||
+            lower.includes("settlement") ||
+            lower.includes("paid") ||
+            lower.includes("lunas") ||
+            lower.includes("sukses");
+
+          const hasAmountOrOrder =
+            blk.includes(params.orderNumber) ||
+            blk.includes(`Rp${amountFormatted}`) ||
+            blk.includes(`Rp ${amountFormatted}`) ||
+            blk.includes(`IDR ${amountFormatted}`) ||
+            blk.includes(`Rp${amountPlain}`) ||
+            blk.includes(`Rp ${amountPlain}`);
+
+          if (isPaymentNotice && hasSuccessWord && hasAmountOrOrder) {
+            return finish(true);
+          }
+        }
+        return finish(false);
+      }
+    });
+  });
 }
 
 export async function sendRefundEmail(order: OrderView, note: string) {

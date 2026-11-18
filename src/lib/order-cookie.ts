@@ -10,10 +10,12 @@ import type {
   OrderView,
   Payment,
   PaymentStatus,
+  User,
 } from "./types";
 
 export const ORDER_COOKIE_NAME = "mug1iii_orders_v2";
 export const ACTIVE_ORDER_COOKIE_NAME = "mug1iii_active_order_v2";
+export const REG_USER_COOKIE_NAME = "mug1iii_reg_user_v2";
 
 const LEGACY_ORDER_COOKIE = "mug1iii_orders";
 const LEGACY_ACTIVE_COOKIE = "mug1iii_active_order";
@@ -26,6 +28,7 @@ export interface StoredOrder {
   id: string;
   orderNumber: string;
   userId: string;
+  userEmail?: string;
   totalAmount: number;
   taxAmount: number;
   status: OrderStatus;
@@ -110,19 +113,50 @@ export function getStoredOrderById(orderId: string): StoredOrder | null {
 }
 
 /**
- * Hydrates orders, payments, and drive links from verified cookies into the in-memory DbShape.
+ * Hydrates registered users, orders, payments, and drive links from verified cookies into the in-memory DbShape.
  */
 export function hydrateOrdersFromCookies(db: DbShape): void {
   try {
+    const cookieStore = cookies();
+    const regUserRaw = cookieStore.get(REG_USER_COOKIE_NAME)?.value;
+    const regUser = verifyAndParse<User>(regUserRaw);
+    if (regUser && regUser.email) {
+      const idx = db.users.findIndex(
+        (u) => u.id === regUser.id || u.email.toLowerCase() === regUser.email.toLowerCase(),
+      );
+      if (idx === -1) {
+        db.users.push(regUser);
+      } else {
+        db.users[idx] = { ...db.users[idx], ...regUser };
+      }
+    }
+
     const cookieOrders = getOrdersFromCookies();
     if (!cookieOrders.length) return;
 
     for (const co of cookieOrders) {
+      if (co.userEmail && co.userEmail !== "—") {
+        const hasUser = db.users.some(
+          (u) => u.id === co.userId || u.email.toLowerCase() === co.userEmail!.toLowerCase(),
+        );
+        if (!hasUser) {
+          db.users.push({
+            id: co.userId,
+            email: co.userEmail,
+            name: co.userEmail.split("@")[0],
+            avatarUrl: null,
+            role: "BUYER",
+            createdAt: co.createdAt,
+          });
+        }
+      }
+
       const existingIdx = db.orders.findIndex((o) => o.id === co.id);
       const orderEntry: Order = {
         id: co.id,
         orderNumber: co.orderNumber,
         userId: co.userId,
+        userEmail: co.userEmail,
         totalAmount: co.totalAmount,
         taxAmount: co.taxAmount ?? 0,
         status: co.status,
@@ -146,6 +180,7 @@ export function hydrateOrdersFromCookies(db: DbShape): void {
         db.orders[existingIdx] = {
           ...existing,
           ...orderEntry,
+          userEmail: existing.userEmail || orderEntry.userEmail,
           status: isPaid ? "PAID" : existing.status,
           paymentStatus: isPaySuccess ? "SUCCESS" : existing.paymentStatus,
           accessStatus: isGranted
@@ -198,6 +233,25 @@ export function hydrateOrdersFromCookies(db: DbShape): void {
 }
 
 /**
+ * Attaches HMAC-signed registered user cookie so new registrations persist across serverless containers.
+ */
+export function attachRegisteredUserCookie(
+  res: { cookies: { set: (name: string, value: string, options?: any) => void } },
+  user: User,
+): void {
+  try {
+    res.cookies.set(REG_USER_COOKIE_NAME, signPayload(JSON.stringify(user)), {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+      sameSite: "lax" as const,
+      httpOnly: true,
+    });
+  } catch (err) {
+    console.warn("[attachRegisteredUserCookie] Failed:", err);
+  }
+}
+
+/**
  * Attaches HMAC-signed order cookies to an HTTP response and clears any legacy unsigned cookies.
  */
 export function attachOrderCookies(
@@ -216,6 +270,7 @@ export function attachOrderCookies(
       id: order.id,
       orderNumber: order.orderNumber,
       userId: order.userId,
+      userEmail: order.userEmail,
       totalAmount: order.totalAmount,
       taxAmount: order.taxAmount ?? 0,
       status: order.status,
