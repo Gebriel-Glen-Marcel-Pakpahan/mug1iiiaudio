@@ -55,6 +55,15 @@ export function buildSeedDb(): DbShape {
       passwordHash: hashPassword("admin123"),
     },
     {
+      id: "usr_store_admin",
+      email: "mugiiistore@gmail.com",
+      name: "Owner MUG1III Store",
+      avatarUrl: null,
+      role: "ADMIN",
+      createdAt: ago(400),
+      passwordHash: hashPassword("admin123"),
+    },
+    {
       id: "usr_demo",
       email: DEMO_BUYER_EMAIL,
       name: "Rangga Prasetya",
