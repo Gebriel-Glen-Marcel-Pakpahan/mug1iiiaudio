@@ -65,7 +65,7 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
 
   return (
     <div className="flex flex-col items-start gap-2">
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={buyNow}
           disabled={state === "loading"}
@@ -88,18 +88,19 @@ export function AddToCart({ albumId, albumTitle }: { albumId: string; albumTitle
           )}
         >
           {state === "added" ? <Check size={14} /> : <Plus size={14} />}
-          {state === "added" ? "Ditambahkan" : "Keranjang"}
-        </button>
-
-        <button
-          onClick={() => router.push("/keranjang")}
-          className="btn-outline"
-          aria-label="Lihat keranjang"
-        >
-          <ShoppingBag size={14} />
-          Keranjang
+          {state === "added" ? "Ditambahkan" : "Tambah ke Keranjang"}
         </button>
       </div>
+
+      {state === "added" && (
+        <button
+          onClick={() => router.push("/keranjang")}
+          className="mt-1 flex items-center gap-1.5 font-mono text-[0.6875rem] uppercase tracking-wider text-gold-bright hover:underline"
+        >
+          <ShoppingBag size={13} />
+          Buka Keranjang Belanja &rarr;
+        </button>
+      )}
 
       {!session?.user && (
         <p className="font-mono text-[0.5625rem] uppercase tracking-label text-ink-faint">
